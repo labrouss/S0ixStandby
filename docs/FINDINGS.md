@@ -82,6 +82,19 @@ BIOS update anyway.
 bundled `turbostat`, and `-r off` was started over SSH (`localhost:10.0`,
 X forwarding). See TESTING.md.
 
+## 5. macOS Deep Idle on this HP (2026-11-02)
+
+| Item | Result |
+|---|---|
+| `SSDT-DEEPIDLE` | macOS sleeps with type 7 (Deep Idle) and wakes on the power button (`PWRB`) |
+| **CPUID spoof** | With `Cpuid1Data` = Coffee Lake (`0x906EA`) XCPM never goes below **core C6 / package PC6** in Deep Idle (`machdep.xcpm.deep_idle_last_stats`: CC7 0 %, C6 95 %). With **Ice Lake (`0x706E5`)**: **CC7 99 %, package C10 99 %** |
+| Why | XCPM picks idle states from the table of the CPU model it is told. Tiger Lake reports `CPUID.5:EDX` = `0x11121020` (no MWAIT C3 hint, fewer sub-states), identical to Ice Lake, unlike Coffee Lake. **Tiger Lake hackintoshes must spoof Ice Lake for deep idle** |
+| MSR 0xE2 | `0x74008008`: package limit C10, CFG lock on (not a limit) |
+| LPS0 `_DSM` fn 5/6 | Safe: wakes normally |
+| LPS0 `_DSM` fn 3/4 | Puts the EC into its standby mode (power LED breathes); with the Coffee Lake spoof the wake never reached the CPU (`Failure during sleep 0x1F`) |
+| SLP_S0 residency | 0 so far, even at PC10 99 % (fn 3/4 not yet tested with the Ice Lake spoof) |
+| WhateverXe | Acceleration panics on any wake (`context-ID-mismatch`); `-wex-noaccel` avoids it. Upstream: sleep unsupported |
+
 ## Still to capture
 
 - A 30–60 min run of `s2idle-test.sh` for a tighter power number.

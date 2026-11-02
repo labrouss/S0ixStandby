@@ -33,6 +33,8 @@ residency. See [docs/RESEARCH-2A.md](docs/RESEARCH-2A.md).
    `-s0ixdbg` (verbose log), `-s0ixoff` (don't load).
 4. `macos/s0ix-status.sh` shows what the kext found and measured.
 
+**Tiger Lake:** spoof the CPUID as **Ice Lake** (`Cpuid1Data` `E5060700 00000000 00000000 00000000`), not Coffee Lake. With Coffee Lake, XCPM stops at core C6 in Deep Idle; with Ice Lake it reaches C10 ([docs/FINDINGS.md](docs/FINDINGS.md) §5). Check with `sysctl machdep.xcpm.deep_idle_last_stats`.
+
 Keep any existing S3 workaround (e.g. a `_S3` → soft-off patch): if macOS
 picks S3 instead of Deep Idle, you get the old behaviour.
 

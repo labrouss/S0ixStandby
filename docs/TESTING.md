@@ -108,6 +108,8 @@ carry `IOPlatformSystemSleepPolicy` (Q9).
 ### Phase N2: S0ixStandby.kext (USB-stick EFI)
 
 Keep `SSDT-DEEPIDLE.aml` and `-wex-noaccel` (until WhateverXe survives sleep).
+**Tiger Lake: spoof Ice Lake** (`Cpuid1Data` `E5060700…`, base64 `5QYHAAAAAAAAAAAAAAAAAA==`), not Coffee Lake: with Coffee Lake XCPM stops at C6 (FINDINGS §5).
+XCPM's own view of each Deep Idle: `sysctl machdep.xcpm.deep_idle_last_stats`.
 
 **Step 1 — meter only.** Add the kext and boot-args `-s0ixnodsm -s0ixdbg`.
 ```bash
@@ -146,3 +148,4 @@ Add one row per run.
 | 2026-11-02 | macOS 26.7.1 (25G241) | 01.19.00 | N2 (earlier): 0.1.2, all fn | — | — | ? | LED breathing, **no wake**: `Failure during sleep 0x1F` (wake never reached the CPU) |
 | 2026-11-02 | macOS 26.7.1 (25G241) | 01.19.00 | N2 test A: 0.1.4, `s0ixfn=0x60` | 3.4 min (TSC) | 2.17 | 0 | **PC6 95 %**, PC3 4 %, PC7–PC10 0 %: package capped at PC6 |
 | 2026-11-02 | macOS 26.7.1 (25G241) | 01.19.00 | N2 test A: 0.1.5, `s0ixfn=0x60` | 2.9 min (TSC) | 2.34 | 0 | PC6 95 %, PC3 4 % again; **MSR 0xE2 = 0x74008008: limit C10**, CFG lock on, same at sleep: not a package limit |
+| 2026-11-02 | macOS 26.7.1 (25G241) | 01.19.00 | N2 test A: 0.1.5, `s0ixfn=0x60`, **CPUID spoof Ice Lake** | 3.4 min (TSC) | 1.57 | 0 | **PC10 99 %**, XCPM CC7 99 % / C10 99 %; wakes. SLP_S0 still 0 |
