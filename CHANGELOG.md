@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.9 (unreleased)
+
+- **SLP_S0 blocker report:** reads the PCH IP power-gating status inside the
+  Deep Idle halt and names the IPs still powered (`Last SLP_S0 blockers at
+  halt`, raw `Last gating status at halt`, kernel log line). Infrastructure
+  IPs (PMC, OPI, SBR, PSF, CSME, NPK_AON, reserved) are not reported.
+  Platform data (register offset relative to the LPIT counter, IP names) lives
+  in Info.plist `S0ixPlatforms`, keyed by CPU model; first entry: Tiger
+  Lake-LP (`cpu-8c`). Platforms without data: report `unavailable`.
+
 ## 0.1.8 (unreleased)
 
 - `-s0ixd3`: PCI endpoints without a driver (e.g. an Intel Integrated Sensor

@@ -6,7 +6,7 @@ echo "== kext"
 kextstat 2>/dev/null | grep -i s0ixstandby || kmutil showloaded 2>/dev/null | grep -i s0ixstandby || echo "S0ixStandby not loaded"
 echo
 echo "== S0ixStandby properties"
-ioreg -rd1 -c S0ixStandby -w0 | grep -E '"(DSM|LPIT|C-state meter|CPU model|PKG_CST|D3|Sleep count|Last|Total|Residency)' || echo "(no S0ixStandby service)"
+ioreg -rd1 -c S0ixStandby -w0 | grep -E '"(DSM|LPIT|C-state meter|CPU model|PKG_CST|D3|SLP_S0 blocker|Sleep count|Last|Total|Residency)' || echo "(no S0ixStandby service)"
 echo
 echo "== Last sleep (computed)"
 P=$(ioreg -rd1 -c S0ixStandby -w0)
@@ -23,6 +23,8 @@ if [ -n "$TSC" ] && [ -n "$TSCF" ] && [ "$TSCF" -gt 0 ]; then
 else
   echo "(no C-state/TSC data yet: needs kext >= 0.1.4 and one sleep)"
 fi
+echo "Likely SLP_S0 blockers (IPs still powered at the halt):"
+echo "$P" | grep '"Last SLP_S0 blockers at halt"' | sed 's/.*= (//; s/)$//; s/"//g; s/^/  /' || true
 echo
 echo "== Deep Idle"
 ioreg -rd1 -c IOPMrootDomain | grep -E 'IOPMDeepIdleSupported|IOPMSystemSleepType'

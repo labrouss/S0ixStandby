@@ -36,6 +36,96 @@
 			</array>
 			<key>IOProbeScore</key>
 			<integer>1000</integer>
+			<!-- Per-platform data for the "SLP_S0 blockers" report. Key: cpu-<model hex>.
+			     Gating offset: PCH IP power-gating status register, relative to the
+			     LPIT SLP_S0 counter address. Bit n = IP n, 1 = power gated.
+			     Tiger Lake-LP: register PWRMBASE+0x1D90, counter PWRMBASE+0x193C. -->
+			<key>S0ixPlatforms</key>
+			<dict>
+				<key>cpu-8c</key>
+				<dict>
+					<key>Name</key>
+					<string>Tiger Lake-LP</string>
+					<key>Gating offset from SLP_S0 counter</key>
+					<integer>1108</integer>
+					<key>Gating bytes</key>
+					<integer>9</integer>
+					<key>IP names</key>
+					<array>
+						<string>PMC</string>
+						<string>OPI-DMI</string>
+						<string>SPI/eSPI</string>
+						<string>XHCI</string>
+						<string>SPA</string>
+						<string>SPB</string>
+						<string>SPC</string>
+						<string>GBE</string>
+						<string>SATA</string>
+						<string>HDA_PGD0</string>
+						<string>HDA_PGD1</string>
+						<string>HDA_PGD2</string>
+						<string>HDA_PGD3</string>
+						<string>SPD</string>
+						<string>LPSS</string>
+						<string>LPC</string>
+						<string>SMB</string>
+						<string>ISH</string>
+						<string>P2SB</string>
+						<string>NPK_VNN</string>
+						<string>SDX</string>
+						<string>SPE</string>
+						<string>Fuse</string>
+						<string>SBR8</string>
+						<string>CSME_FSC</string>
+						<string>USB3_OTG</string>
+						<string>EXI</string>
+						<string>CSE</string>
+						<string>CSME_KVM</string>
+						<string>CSME_PMT</string>
+						<string>CSME_CLINK</string>
+						<string>CSME_PTIO</string>
+						<string>CSME_USBR</string>
+						<string>CSME_SUSRAM</string>
+						<string>CSME_SMT1</string>
+						<string>CSME_SMT4</string>
+						<string>CSME_SMS2</string>
+						<string>CSME_SMS1</string>
+						<string>CSME_RTC</string>
+						<string>CSME_PSF</string>
+						<string>SBR0</string>
+						<string>SBR1</string>
+						<string>SBR2</string>
+						<string>SBR3</string>
+						<string>SBR4</string>
+						<string>SBR5</string>
+						<string>CSME_PECI</string>
+						<string>PSF1</string>
+						<string>PSF2</string>
+						<string>PSF3</string>
+						<string>PSF4</string>
+						<string>CNVI</string>
+						<string>UFS0</string>
+						<string>EMMC</string>
+						<string>SPF</string>
+						<string>SBR6</string>
+						<string>SBR7</string>
+						<string>NPK_AON</string>
+						<string>HDA_PGD4</string>
+						<string>HDA_PGD5</string>
+						<string>HDA_PGD6</string>
+						<string>PSF6</string>
+						<string>PSF7</string>
+						<string>PSF8</string>
+						<string>PSF9</string>
+						<string>RES_66</string>
+						<string>RES_67</string>
+						<string>RES_68</string>
+						<string>RES_69</string>
+						<string>RES_70</string>
+						<string>TBTLSX</string>
+					</array>
+				</dict>
+			</dict>
 		</dict>
 	</dict>
 	<key>OSBundleLibraries</key>

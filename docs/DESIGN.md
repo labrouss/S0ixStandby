@@ -29,6 +29,15 @@ leak power. The helper adds exactly those calls and nothing else:
 | Diagnostics | IORegistry: found GUIDs and masks, last entry/exit timestamps, SLP_S0 counter delta (LPIT) per sleep, i.e. the phase 0 meter built in |
 | Opt-out | `-s0ixoff` boot-arg |
 
+**Diagnostics built in:** SLP_S0 residency per sleep (LPIT), package C-states
+per sleep and per halt (MSRs, Intel model whitelist), MSR 0xE2, and the
+**SLP_S0 blocker report**: the PCH IP power-gating status read inside the
+halt, decoded with per-platform data (`S0ixPlatforms` in Info.plist: register
+offset relative to the LPIT counter + IP names, keyed by CPU model). Adding a
+platform = adding data, not code. Caveat: the snapshot is taken as the CPU
+halts; an IP that gates itself a moment later is a false positive, so treat
+the list as "likely" blockers and confirm by changing one thing at a time.
+
 Function numbers come from Intel's and Microsoft's published LPS0 /
 Modern Standby firmware-notification specs. Linux is only a cross-check
 (GPL, see README licence note). Name: **S0ixStandby**

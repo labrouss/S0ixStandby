@@ -230,6 +230,7 @@ bool S0ixStandby::start(IOService *provider)
 	uint32_t model = 0;
 	cstateMask = bootArg("-s0ixnocst") ? 0 : cstateSupport(model);
 	setProperty("CPU model", (unsigned long long)model, 32);
+	setupBlockerReport(model);
 	setProperty("C-state meter", cstateMask != 0);
 	if (cstateMask) {
 		// Package C-state limit: a value below C10 caps how deep the package
@@ -268,7 +269,7 @@ bool S0ixStandby::start(IOService *provider)
 	// after start() succeeds (IOService.cpp, IOInstallServiceSleepPlatformActions).
 	setProperty("IOPlatformSleepAction", (unsigned long long)kActionPriority, 32);
 	setProperty("IOPlatformWakeAction", (unsigned long long)kActionPriority, 32);
-	if (cstateMask || (pmcDump && counterPage)) {
+	if (cstateMask || (pmcDump && counterPage) || gatingPtr) {
 		// Boot-CPU snapshot right around the Deep Idle halt (MSR/MMIO reads only).
 		setProperty("IOPlatformQuiesceAction", (unsigned long long)kActionPriority, 32);
 		setProperty("IOPlatformActiveAction", (unsigned long long)kActionPriority, 32);
@@ -306,6 +307,8 @@ void S0ixStandby::free()
 	counterPage = nullptr;
 	OSSafeReleaseNULL(counterMap);
 	OSSafeReleaseNULL(lps0);
+	OSSafeReleaseNULL(ipNames);
+	gatingPtr = nullptr;
 	IOService::free();
 }
 
@@ -524,6 +527,78 @@ bool S0ixStandby::readCounter(uint64_t &value)
 }
 
 // ---------------------------------------------------------------------------
+// SLP_S0 blocker report
+// ---------------------------------------------------------------------------
+
+// Fabric/infrastructure IPs that are normally still powered at the moment the
+// CPU halts; everything else still powered there is a likely S0ix blocker.
+static bool isInfrastructureIP(const char *n)
+{
+	static const char *const prefixes[] = { "PMC", "OPI", "SBR", "PSF", "CSME", "NPK_AON", "RES_" };
+	for (const char *p : prefixes) {
+		size_t l = strlen(p);
+		if (!strncmp(n, p, l)) return true;
+	}
+	return false;
+}
+
+void S0ixStandby::setupBlockerReport(uint32_t cpuModel)
+{
+	setProperty("SLP_S0 blocker report", "unavailable");
+	if (!counterPage || !counterAddr) return;
+	OSDictionary *all = OSDynamicCast(OSDictionary, getProperty("S0ixPlatforms"));
+	if (!all) return;
+	char key[16];
+	snprintf(key, sizeof(key), "cpu-%x", cpuModel);
+	OSDictionary *pf = OSDynamicCast(OSDictionary, all->getObject(key));
+	if (!pf) return;
+	OSNumber *off = OSDynamicCast(OSNumber, pf->getObject("Gating offset from SLP_S0 counter"));
+	OSNumber *len = OSDynamicCast(OSNumber, pf->getObject("Gating bytes"));
+	OSArray *names = OSDynamicCast(OSArray, pf->getObject("IP names"));
+	if (!off || !len || !names) return;
+
+	uint64_t reg = counterAddr + off->unsigned64BitValue();
+	uint32_t bytes = len->unsigned32BitValue();
+	uint64_t page = counterAddr & ~0xFFFULL;
+	// Must be dword aligned, fit our buffer and lie in the page already mapped.
+	if ((reg & 3) || bytes == 0 || bytes > sizeof(gatingAtHalt) || reg < page || reg + bytes > page + 0x1000)
+		return;
+	gatingPtr = counterPage + (reg - page) / 4;
+	gatingBytes = bytes;
+	ipNames = names;
+	ipNames->retain();
+	if (OSString *n = OSDynamicCast(OSString, pf->getObject("Name")))
+		setProperty("SLP_S0 blocker report", n);
+}
+
+void S0ixStandby::publishBlockers()
+{
+	if (!gatingValid || !ipNames) return;
+	gatingValid = false;
+	const uint8_t *b = reinterpret_cast<const uint8_t *>(gatingAtHalt);
+	OSArray *blockers = OSArray::withCapacity(8);
+	char line[256]; size_t n = 0; line[0] = 0;
+	for (uint32_t i = 0; i < gatingBytes * 8 && i < ipNames->getCount(); i++) {
+		bool gated = (b[i / 8] >> (i % 8)) & 1;
+		OSString *name = OSDynamicCast(OSString, ipNames->getObject(i));
+		if (gated || !name || isInfrastructureIP(name->getCStringNoCopy()))
+			continue;
+		if (blockers) blockers->setObject(name);
+		if (n < sizeof(line))
+			n += snprintf(line + n, sizeof(line) - n, " %s", name->getCStringNoCopy());
+	}
+	if (blockers) {
+		setProperty("Last SLP_S0 blockers at halt", blockers);
+		blockers->release();
+	}
+	char raw[80]; size_t r = 0; raw[0] = 0;
+	for (uint32_t i = 0; i < gatingBytes && r < sizeof(raw); i++)
+		r += snprintf(raw + r, sizeof(raw) - r, "%02x", b[i]);
+	setProperty("Last gating status at halt", raw);
+	LOG("IPs still powered at the Deep Idle halt (likely S0ix blockers):%s", n ? line : " none");
+}
+
+// ---------------------------------------------------------------------------
 // Driverless PCI endpoints -> D3hot during Deep Idle (-s0ixd3)
 // ---------------------------------------------------------------------------
 
@@ -641,6 +716,10 @@ IOReturn S0ixStandby::callPlatformFunction(const OSSymbol *functionName, bool wa
 			if (pmcDump && counterPage) {
 				for (uint32_t i = 0; i < 1024; i++) pmcAtHalt[i] = counterPage[i];
 				pmcHaltValid = true;
+			}
+			if (gatingPtr) {
+				for (uint32_t i = 0; i < (gatingBytes + 3) / 4; i++) gatingAtHalt[i] = gatingPtr[i];
+				gatingValid = true;
 			}
 			return kIOReturnSuccess;
 		}
@@ -777,6 +856,8 @@ void S0ixStandby::publish()
 		}
 	}
 	haltValid = false;
+
+	publishBlockers();
 
 	if (pmcHaltValid) {
 		if (OSData *d = OSData::withBytes(pmcAtHalt, sizeof(pmcAtHalt))) {

@@ -87,6 +87,18 @@ private:
 	bool d3Active {false};
 	IOTimerEventSource *scanTimer {nullptr};
 	void scanUnbound();
+
+	// SLP_S0 blocker report: PCH IP power-gating status read at the Deep Idle
+	// halt; IPs still powered (except always-on infrastructure) are reported
+	// by name. Register location and names come from per-platform data
+	// (Info.plist "S0ixPlatforms"), keyed by CPU model; no data = no report.
+	volatile uint32_t *gatingPtr {nullptr};
+	uint32_t gatingBytes {0};
+	OSArray *ipNames {nullptr};
+	uint32_t gatingAtHalt[8] {};
+	bool gatingValid {false};
+	void setupBlockerReport(uint32_t cpuModel);
+	void publishBlockers();
 	void d3Enter();
 	void d3Exit();
 	static void scanTimerFired(OSObject *owner, IOTimerEventSource *sender);
