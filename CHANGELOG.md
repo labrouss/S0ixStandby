@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.10 (unreleased)
+
+- `-s0ixd3`: driverless endpoints are now kept in D3hot from the boot scan on
+  (re-applied before each Deep Idle), so firmware-managed blocks like ISH get
+  time to power down. Memory-class devices are excluded.
+- `Live SLP_S0 blockers`: the gating report refreshed every 10 s while awake.
+- `DSM function filter` shown in hex.
+
 ## 0.1.9 (unreleased)
 
 - **SLP_S0 blocker report:** reads the PCH IP power-gating status inside the

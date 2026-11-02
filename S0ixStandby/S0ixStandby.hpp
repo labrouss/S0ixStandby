@@ -76,15 +76,14 @@ private:
 	bool pmcHaltValid {false};
 
 	// -s0ixd3: PCI endpoints with no driver (e.g. an Intel Integrated Sensor
-	// Hub on macOS) stay in D0 and can keep the PCH out of S0ix. They are put
-	// in D3hot for Deep Idle and back to D0 on wake.
+	// Hub on macOS) stay in D0 and can keep the PCH out of S0ix. They are kept
+	// in D3hot (nothing uses them).
 	enum { kMaxD3 = 16 };
 	bool d3Unbound {false};
 	IOLock *d3Lock {nullptr};
 	IOPCIDevice *d3Dev[kMaxD3] {};
 	UInt8 d3Cap[kMaxD3] {};
 	uint32_t d3Count {0};
-	bool d3Active {false};
 	IOTimerEventSource *scanTimer {nullptr};
 	void scanUnbound();
 
@@ -99,8 +98,11 @@ private:
 	bool gatingValid {false};
 	void setupBlockerReport(uint32_t cpuModel);
 	void publishBlockers();
+	void publishLiveBlockers();
+	OSArray *blockerNames(const uint8_t *gatingBytesPtr, char *line, size_t lineSize);
+	IOTimerEventSource *liveTimer {nullptr};
+	static void liveTimerFired(OSObject *owner, IOTimerEventSource *sender);
 	void d3Enter();
-	void d3Exit();
 	static void scanTimerFired(OSObject *owner, IOTimerEventSource *sender);
 	void readCStates(uint64_t *out);
 

@@ -23,6 +23,8 @@ if [ -n "$TSC" ] && [ -n "$TSCF" ] && [ "$TSCF" -gt 0 ]; then
 else
   echo "(no C-state/TSC data yet: needs kext >= 0.1.4 and one sleep)"
 fi
+echo "Live (awake, every 10 s; many IPs are normally on while awake):"
+echo "$P" | grep '"Live SLP_S0 blockers"' | sed 's/.*= (//; s/)$//; s/"//g; s/^/  /' || true
 echo "Likely SLP_S0 blockers (IPs still powered at the halt):"
 echo "$P" | grep '"Last SLP_S0 blockers at halt"' | sed 's/.*= (//; s/)$//; s/"//g; s/^/  /' || true
 echo

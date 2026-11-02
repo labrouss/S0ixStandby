@@ -19,7 +19,8 @@
 //  Boot-args:  -s0ixoff    do not load
 //              -s0ixnodsm  meter only, never call _DSM
 //              -s0ixdbg    verbose logging
-//              -s0ixd3     put driverless PCI endpoints in D3hot during Deep Idle
+//              -s0ixd3     keep driverless PCI endpoints in D3hot (from 60 s after
+//                          boot, re-applied before each Deep Idle)
 //              -s0ixpmcdump snapshot the PMC register page (with the SLP_S0
 //                          counter) at boot and at each Deep Idle halt
 //              s0ixfn=N    bitmask of _DSM functions allowed to run, e.g.
@@ -255,6 +256,7 @@ bool S0ixStandby::start(IOService *provider)
 			scanTimer = IOTimerEventSource::timerEventSource(this, &S0ixStandby::scanTimerFired);
 			if (scanTimer && workLoop->addEventSource(scanTimer) != kIOReturnSuccess)
 				OSSafeReleaseNULL(scanTimer);
+	OSSafeReleaseNULL(liveTimer);
 			// Drivers keep loading after us: scan once boot has settled.
 			if (scanTimer) scanTimer->setTimeoutMS(60000);
 		}
@@ -262,7 +264,11 @@ bool S0ixStandby::start(IOService *provider)
 	setProperty("D3 unbound devices", d3Unbound);
 
 	setProperty("DSM enabled", dsmEnabled);
-	setProperty("DSM function filter", (unsigned long long)fnAllow, 32);
+	{
+		char f[16];
+		snprintf(f, sizeof(f), "0x%x", fnAllow);
+		setProperty("DSM function filter", f);
+	}
 	setProperty("Sleep count", (unsigned long long)0, 32);
 
 	// Register for the sleep/wake platform action queues. XNU installs these
@@ -273,6 +279,13 @@ bool S0ixStandby::start(IOService *provider)
 		// Boot-CPU snapshot right around the Deep Idle halt (MSR/MMIO reads only).
 		setProperty("IOPlatformQuiesceAction", (unsigned long long)kActionPriority, 32);
 		setProperty("IOPlatformActiveAction", (unsigned long long)kActionPriority, 32);
+	}
+
+	if (workLoop && gatingPtr) {
+		liveTimer = IOTimerEventSource::timerEventSource(this, &S0ixStandby::liveTimerFired);
+		if (liveTimer && workLoop->addEventSource(liveTimer) != kIOReturnSuccess)
+			OSSafeReleaseNULL(liveTimer);
+		if (liveTimer) liveTimer->setTimeoutMS(10000);
 	}
 
 	registerService();
@@ -292,6 +305,10 @@ void S0ixStandby::stop(IOService *provider)
 		scanTimer->cancelTimeout();
 		if (workLoop) workLoop->removeEventSource(scanTimer);
 	}
+	if (liveTimer) {
+		liveTimer->cancelTimeout();
+		if (workLoop) workLoop->removeEventSource(liveTimer);
+	}
 	IOService::stop(provider);
 }
 
@@ -299,6 +316,7 @@ void S0ixStandby::free()
 {
 	OSSafeReleaseNULL(publishTimer);
 	OSSafeReleaseNULL(scanTimer);
+	OSSafeReleaseNULL(liveTimer);
 	OSSafeReleaseNULL(workLoop);
 	for (uint32_t i = 0; i < d3Count; i++) OSSafeReleaseNULL(d3Dev[i]);
 	d3Count = 0;
@@ -571,23 +589,54 @@ void S0ixStandby::setupBlockerReport(uint32_t cpuModel)
 		setProperty("SLP_S0 blocker report", n);
 }
 
-void S0ixStandby::publishBlockers()
+OSArray *S0ixStandby::blockerNames(const uint8_t *b, char *line, size_t lineSize)
 {
-	if (!gatingValid || !ipNames) return;
-	gatingValid = false;
-	const uint8_t *b = reinterpret_cast<const uint8_t *>(gatingAtHalt);
 	OSArray *blockers = OSArray::withCapacity(8);
-	char line[256]; size_t n = 0; line[0] = 0;
+	size_t n = 0;
+	if (lineSize) line[0] = 0;
 	for (uint32_t i = 0; i < gatingBytes * 8 && i < ipNames->getCount(); i++) {
 		bool gated = (b[i / 8] >> (i % 8)) & 1;
 		OSString *name = OSDynamicCast(OSString, ipNames->getObject(i));
 		if (gated || !name || isInfrastructureIP(name->getCStringNoCopy()))
 			continue;
 		if (blockers) blockers->setObject(name);
-		if (n < sizeof(line))
-			n += snprintf(line + n, sizeof(line) - n, " %s", name->getCStringNoCopy());
+		if (n < lineSize)
+			n += snprintf(line + n, lineSize - n, " %s", name->getCStringNoCopy());
 	}
-	if (blockers) {
+	return blockers;
+}
+
+void S0ixStandby::liveTimerFired(OSObject *owner, IOTimerEventSource *sender)
+{
+	if (S0ixStandby *self = OSDynamicCast(S0ixStandby, owner)) {
+		self->publishLiveBlockers();
+		sender->setTimeoutMS(10000);
+	}
+}
+
+// Same report while awake (every 10 s). Many IPs are legitimately on while
+// the system runs; useful to see whether a given IP ever powers down.
+void S0ixStandby::publishLiveBlockers()
+{
+	if (!gatingPtr || !ipNames) return;
+	uint32_t now[8] {};
+	for (uint32_t i = 0; i < (gatingBytes + 3) / 4; i++) now[i] = gatingPtr[i];
+	char line[256];
+	if (OSArray *a = blockerNames(reinterpret_cast<const uint8_t *>(now), line, sizeof(line))) {
+		setProperty("Live SLP_S0 blockers", a);
+		a->release();
+	}
+}
+
+void S0ixStandby::publishBlockers()
+{
+	if (!gatingValid || !ipNames) return;
+	gatingValid = false;
+	const uint8_t *b = reinterpret_cast<const uint8_t *>(gatingAtHalt);
+	char line[256];
+	size_t n = 0;
+	if (OSArray *blockers = blockerNames(b, line, sizeof(line))) {
+		n = blockers->getCount();
 		setProperty("Last SLP_S0 blockers at halt", blockers);
 		blockers->release();
 	}
@@ -628,7 +677,7 @@ void S0ixStandby::scanUnbound()
 			continue;
 		uint32_t cls = dev->configRead32(kIOPCIConfigClassCode) >> 8;   // class/subclass/prog-if
 		uint8_t base = (cls >> 16) & 0xFF;
-		if (base == 0x06 || base == 0x03)             // bridges, display: never
+		if (base == 0x06 || base == 0x03 || base == 0x05)   // bridges, display, memory: never
 			continue;
 		UInt8 pm = 0;
 		if (!dev->findPCICapability(kIOPCIPowerManagementCapability, &pm) || !pm)
@@ -656,36 +705,35 @@ void S0ixStandby::scanUnbound()
 	IOLockUnlock(d3Lock);
 
 	if (names) { setProperty("D3 devices", names); names->release(); }
-	LOG("%u driverless PCI endpoint(s) will be put in D3hot for Deep Idle", n);
-}
+	LOG("%u driverless PCI endpoint(s) put in D3hot", n);
 
-// PMCSR is at capability + 4; bits 1:0 = power state (0 = D0, 3 = D3hot).
-void S0ixStandby::d3Enter()
-{
-	if (!d3Unbound || !d3Lock || d3Active) return;
+	// They have no driver, so nothing uses them: keep them in D3hot while
+	// awake too. Gives firmware-managed blocks (e.g. ISH) time to power down
+	// before the next sleep.
 	IOLockLock(d3Lock);
 	for (uint32_t i = 0; i < d3Count; i++) {
 		UInt16 pmcsr = d3Dev[i]->configRead16(d3Cap[i] + 4);
 		if ((pmcsr & 3) == 0)
 			d3Dev[i]->configWrite16(d3Cap[i] + 4, (UInt16)((pmcsr & ~3) | 3));
 	}
-	d3Active = d3Count != 0;
 	IOLockUnlock(d3Lock);
 }
 
-void S0ixStandby::d3Exit()
+// PMCSR is at capability + 4; bits 1:0 = power state (0 = D0, 3 = D3hot).
+// Re-asserts D3hot before each Deep Idle (in case firmware brought a device
+// back to D0). Devices stay in D3hot after wake: they have no driver.
+void S0ixStandby::d3Enter()
 {
-	if (!d3Active || !d3Lock) return;
+	if (!d3Unbound || !d3Lock) return;
 	IOLockLock(d3Lock);
 	for (uint32_t i = 0; i < d3Count; i++) {
 		UInt16 pmcsr = d3Dev[i]->configRead16(d3Cap[i] + 4);
-		if ((pmcsr & 3) == 3)
-			d3Dev[i]->configWrite16(d3Cap[i] + 4, (UInt16)(pmcsr & ~3));
+		if ((pmcsr & 3) == 0)
+			d3Dev[i]->configWrite16(d3Cap[i] + 4, (UInt16)((pmcsr & ~3) | 3));
 	}
-	d3Active = false;
 	IOLockUnlock(d3Lock);
-	IODelay(10000);   // PCI PM: 10 ms D3hot -> D0 recovery
 }
+
 
 // ---------------------------------------------------------------------------
 // Sleep / wake
@@ -761,7 +809,6 @@ void S0ixStandby::onWake()
 		dsmExit();
 		entered = false;
 	}
-	d3Exit();
 	counterAtWake = 0;
 	readCounter(counterAtWake);
 	timeAtWake = mach_absolute_time();

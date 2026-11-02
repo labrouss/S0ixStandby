@@ -151,3 +151,4 @@ Add one row per run.
 | 2026-11-02 | macOS 26.7.1 (25G241) | 01.19.00 | N2 test A: 0.1.5, `s0ixfn=0x60`, **CPUID spoof Ice Lake** | 3.4 min (TSC) | 1.57 | 0 | **PC10 99 %**, XCPM CC7 99 % / C10 99 %; wakes. SLP_S0 still 0 |
 | 2026-11-02 | macOS 26.7.1 (25G241) | 01.19.00 | N2: 0.1.6, **all `_DSM` fn**, Ice Lake spoof | 2.9 min (TSC) | 3.37 (too short) | 0 | **LED breathing and clean wake**; boot core CC7 99 %, PC10 99 %; SLP_S0 still 0 |
 | 2026-11-02 | macOS 26.7.1 (25G241) | 01.19.00 | N2: 0.1.7 `-s0ixpmcdump`, all fn, Ice Lake | ~3 min | — | 0 | PMC page readable; at the halt only **ISH (IP #17)** is powered vs Linux; xHCI gated |
+| 2026-11-02 | macOS 26.7.1 (25G241) | 01.19.00 | N2: 0.1.9 `-s0ixd3` (D3hot just before sleep), all fn, Ice Lake | 2.8 min (TSC) | 1.46 (short) | 0 | blocker report: **ISH, CNVI** still powered at the halt; ISH in D3hot but not gated; 6 driverless devices D3, clean wake |
