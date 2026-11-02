@@ -5,16 +5,46 @@
 Real sleep for macOS on laptops whose ACPI S3 is broken or missing,
 by entering **Modern Standby (S0ix)** instead of S3.
 
-**Status: research / design.** No kext yet. First target machine: HP
-EliteBook 840 G8 (BIOS T37 01.19.00), macOS Tahoe 26.7.1, OpenCore 1.0.8.
-The kext is meant to be **generic** (any laptop with an LPS0 device). **CI
-runs on GitHub Actions only.**
+[![build](https://github.com/labrouss/S0ixStandby/actions/workflows/build.yml/badge.svg)](https://github.com/labrouss/S0ixStandby/actions/workflows/build.yml)
 
-**2026-11-02:** XNU already has an Intel S0 sleep path, "Deep Idle", which
-AppleACPIPlatform enables via `\_SB.LPS0`/`\_GPE.LXEN`. The plan is now:
-SSDT first (`acpi/SSDT-DEEPIDLE.dsl`), then a small generic kext that adds
-the LPS0 `_DSM` calls Apple doesn't make. See
-[docs/RESEARCH-2A.md](docs/RESEARCH-2A.md).
+**Status: experimental (0.1.0).** Generic: any laptop with an ACPI LPS0
+device (`PNP0D80`). CI runs on GitHub Actions only. First test machine: HP
+EliteBook 840 G8 (Tiger Lake), macOS Tahoe 26.7.1, OpenCore 1.0.8.
+
+**What works so far (2026-11-02):** with `SSDT-DEEPIDLE` alone, macOS Tahoe
+sleeps in **Deep Idle** (an S0 sleep built into XNU) and **wakes on the
+power button**: 2.0 W asleep vs 0.76 W for Linux s2idle on the same machine.
+The kext adds the LPS0 `_DSM` calls Apple never makes and measures S0ix
+residency. See [docs/RESEARCH-2A.md](docs/RESEARCH-2A.md).
+
+## How it works
+
+| Piece | Role |
+|---|---|
+| `acpi/SSDT-DEEPIDLE` | Defines `\_SB.LPS0` and `\_GPE.LXEN` (Darwin only). AppleACPIPlatform then publishes `IOPMDeepIdleSupported`, and macOS sleeps with type 7 (Deep Idle, XNU `acpi_idle_kernel()`) instead of ACPI S3 |
+| `S0ixStandby.kext` | Plain IOKit (no Lilu). Matches `PNP0D80`, probes Intel / Microsoft / AMD LPS0 `_DSM` masks, calls display-off + entry before the CPUs halt (`IOPlatformSleepAction`) and exit + display-on after wake (`IOPlatformWakeAction`), Deep Idle sleeps only. Reads the SLP_S0 counter described by ACPI LPIT and publishes residency per sleep |
+
+### Install (USB-stick EFI first)
+
+1. `SSDT-DEEPIDLE.aml` → `EFI/OC/ACPI/` and `ACPI > Add`.
+2. `S0ixStandby.kext` → `EFI/OC/Kexts/` and `Kernel > Add` (no dependencies;
+   `MinKernel` empty).
+3. Optional boot-args: `-s0ixnodsm` (meter only, no `_DSM` calls),
+   `-s0ixdbg` (verbose log), `-s0ixoff` (don't load).
+4. `macos/s0ix-status.sh` shows what the kext found and measured.
+
+Keep any existing S3 workaround (e.g. a `_S3` → soft-off patch): if macOS
+picks S3 instead of Deep Idle, you get the old behaviour.
+
+### Build
+
+Done by GitHub Actions (artifacts on every push, releases on `v*` tags).
+Locally on macOS with Xcode:
+```bash
+git clone --depth 1 https://github.com/acidanthera/MacKernelSDK
+make          # build/Release/S0ixStandby.kext
+make DEBUG=1  # build/Debug/S0ixStandby.kext
+```
 
 ## Why
 
@@ -43,6 +73,9 @@ the LPS0 `_DSM` calls Apple doesn't make. See
 | `acpi/SSDT-DEEPIDLE.dsl` (+ `.aml`) | Experiment N1: advertise Deep Idle to AppleACPIPlatform (Darwin only) |
 | `macos/check-deepidle.sh` | Read-only probe: Deep Idle strings in Tahoe, board-id sleep policy, ioreg keys |
 | `macos/sleep-power-test.sh` | macOS counterpart of `s2idle-test.sh`: W per sleep + sleep type used |
+| `macos/s0ix-status.sh` | What the kext found (DSM masks, LPIT counter) and measured (residency per sleep) |
+| `S0ixStandby/` | Kext source |
+| `tools/` | `privacy-scan.sh` (CI), `redact.sh` (used by the capture scripts) |
 
 ## Related
 
@@ -53,9 +86,10 @@ the LPS0 `_DSM` calls Apple doesn't make. See
 
 ## Licence
 
-To be decided (BSD-3 suggested, matching TGLDmic). Code derived from Linux
-would be GPL-2.0 and must stay out of a BSD kext: use Linux only as
-documentation of the hardware behaviour, and Intel/ACPI specs as the source.
+BSD-3-Clause ([LICENSE](LICENSE)). Code derived from Linux would be
+GPL-2.0 and must stay out: Linux is used only as documentation of the
+hardware behaviour, and the Intel/Microsoft/AMD and ACPI specs as the
+source.
 
 ## Privacy
 

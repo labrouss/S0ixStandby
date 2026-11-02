@@ -1,0 +1,108 @@
+# S0ixStandby CI: all builds and releases happen here, never on a local machine.
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Privacy, scripts, ACPI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Privacy scan (blocking)
+        run: bash tools/privacy-scan.sh .
+
+      - name: ShellCheck
+        run: shellcheck -S warning linux/*.sh macos/*.sh tools/*.sh
+
+      - name: Compile SSDTs
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq acpica-tools
+          mkdir -p build/acpi
+          for f in acpi/*.dsl; do
+            iasl -p "build/acpi/$(basename "${f%.dsl}")" "$f"
+          done
+          # The committed .aml should match its source (iasl versions may differ
+          # in the header's compiler revision, so this only warns)
+          for f in acpi/*.aml; do
+            cmp -s "$f" "build/acpi/$(basename "$f")" || echo "::warning file=$f::differs from a fresh compile of its .dsl"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: acpi
+          path: build/acpi/*.aml
+
+  kext:
+    name: Kext (${{ matrix.config }})
+    runs-on: macos-15
+    strategy:
+      matrix:
+        config: [Release, Debug]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # tags for the version string
+
+      - name: MacKernelSDK
+        run: git clone --depth 1 https://github.com/acidanthera/MacKernelSDK
+
+      - name: Build
+        run: |
+          xcodebuild -version
+          make ${{ matrix.config == 'Debug' && 'DEBUG=1' || '' }} dist
+
+      - name: Check binary
+        run: |
+          BIN=build/${{ matrix.config }}/S0ixStandby.kext/Contents/MacOS/S0ixStandby
+          file "$BIN"
+          plutil -lint build/${{ matrix.config }}/S0ixStandby.kext/Contents/Info.plist
+          # The kernel does not export these: a kext importing them fails to load.
+          if nm -u "$BIN" | grep -E '___cxa_atexit|___dso_handle|_atexit$'; then
+            echo "::error::binary imports symbols the kernel does not export"; exit 1
+          fi
+          # Resolve every import against the declared KPIs
+          kextlibs -undef-symbols -xml build/${{ matrix.config }}/S0ixStandby.kext || true
+          if kextlibs -undef-symbols build/${{ matrix.config }}/S0ixStandby.kext 2>&1 | grep -q "symbols not found"; then
+            kextlibs -undef-symbols build/${{ matrix.config }}/S0ixStandby.kext
+            echo "::error::unresolved symbols"; exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: S0ixStandby-${{ matrix.config }}
+          path: build/*.zip
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [checks, kext]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: actions/checkout@v4
+        with:
+          path: src
+      - name: Tag must match VERSION
+        run: test "v$(cat src/VERSION)" = "${GITHUB_REF_NAME}" || { echo "::error::tag ${GITHUB_REF_NAME} != v$(cat src/VERSION)"; exit 1; }
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -la dist
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --repo "${GITHUB_REPOSITORY}" --title "${GITHUB_REF_NAME}" --generate-notes --prerelease

@@ -105,6 +105,26 @@ carry `IOPlatformSystemSleepPolicy` (Q9).
 | Stays on, never wakes | Deep Idle entered, wake source missing (Q11) | Hold power 10 s; send the log from the next boot |
 | Panic / reboot | Note the panic text | Send `/Library/Logs/DiagnosticReports/*.panic` |
 
+### Phase N2: S0ixStandby.kext (USB-stick EFI)
+
+Keep `SSDT-DEEPIDLE.aml` and `-wex-noaccel` (until WhateverXe survives sleep).
+
+**Step 1 — meter only.** Add the kext and boot-args `-s0ixnodsm -s0ixdbg`.
+```bash
+./macos/s0ix-status.sh        # want: DSM Intel mask 0x7f, LPIT counter address, freq 8197
+sudo ./macos/sleep-power-test.sh
+./macos/s0ix-status.sh        # want: Last sleep type 7, "Last residency us" > 0 ?
+```
+`Last residency us` answers whether the platform reached S0ix **without**
+the `_DSM` calls (0 = never, which would explain the 2 W).
+
+**Step 2 — with `_DSM`.** Remove `-s0ixnodsm`, keep `-s0ixdbg`.
+- During sleep the power LED should **breathe** (EC got `_DSM` fn 3).
+- Repeat `sleep-power-test.sh` (30+ min for a precise number) and
+  `s0ix-status.sh`; compare W and residency with step 1 and with Linux.
+- If it does not wake or panics: boot with `-s0ixoff`, collect the panic file
+  and `log show --last 30m --predicate 'eventMessage CONTAINS "S0ixStandby"'`.
+
 ## Results log
 
 Add one row per run.

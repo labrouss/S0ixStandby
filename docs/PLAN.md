@@ -11,7 +11,7 @@ they decide whether phase 2 is worth the effort.
 | **L. Linux baseline** | `capture-baseline.sh` archive + `s0ix-selftest-tool.sh -s` and `-r off` logs + a 30–60 min `s2idle-test.sh` run | Reference data for every later comparison | None |
 | **N0. Deep Idle probe** ✅ *(new)* | `macos/check-deepidle.sh` output | Q8: Tahoe still has the Deep Idle strings; Q9: board-id policy known | None (read-only) |
 | **N1. Deep Idle SSDT** ✅ 2.01 W, clean wake (with `-wex-noaccel`) *(new)* | `SSDT-DEEPIDLE.aml` on the USB EFI + `macos/sleep-power-test.sh` | `IOPMDeepIdleSupported = Yes`, `IOPMSystemSleepType = 7`, one sleep → wake with apps intact | Low: worst case is a hard power-off; the `_S3` patch stays as the fallback |
-| **N2. LPS0 `_DSM` glue** *(new)* | SSDT or small kext calling `PEPD._DSM` 3/5 on entry, 6/4 on exit (Q10) | Watts drop toward the Linux 0.76 W; SLP_S0 residency > 0 (needs the meter) | Low–medium |
+| **N2. LPS0 `_DSM` glue** 🔨 kext 0.1.0 written *(new)* | SSDT or small kext calling `PEPD._DSM` 3/5 on entry, 6/4 on exit (Q10) | Watts drop toward the Linux 0.76 W; SLP_S0 residency > 0 (needs the meter) | Low–medium |
 | **0. Meter** | Read-only kext + `s0ixstandby-meter` CLI: package C10 and SLP_S0 residency, PCH IP gating, LTR | Counters on macOS match Linux semantics (sanity check: C10 rises at idle with the screen off) | None |
 | **1. Idle survey** | Report: with the display off and the system idle on macOS, which IPs stay powered | List of blocking drivers; rough idle power vs Linux | None |
 | **2a. Hook research** | ✅ XNU part done: [RESEARCH-2A.md](RESEARCH-2A.md). AppleACPIPlatform disassembly only if Route B is needed | A concrete, routable hook point and a resume strategy | None (research) |
