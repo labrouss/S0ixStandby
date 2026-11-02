@@ -119,19 +119,20 @@ struct CState { const char *name; uint32_t msr; };
 static const CState kCStates[] = {
 	{ "PC2", 0x60D }, { "PC3", 0x3F8 }, { "PC6", 0x3F9 }, { "PC7", 0x3FA },
 	{ "PC8", 0x630 }, { "PC9", 0x631 }, { "PC10", 0x632 },
-	{ "CC6", 0x3FD }, { "CC7", 0x3FE },      // core of the CPU running the sleep path
+	// Core C-state MSRs are per core; the sleep and wake actions may run on
+	// different cores, so they are not used.
 };
 enum : uint32_t {
 	kPC2 = 1 << 0, kPC3 = 1 << 1, kPC6 = 1 << 2, kPC7 = 1 << 3,
-	kPC8 = 1 << 4, kPC9 = 1 << 5, kPC10 = 1 << 6, kCC6 = 1 << 7, kCC7 = 1 << 8,
+	kPC8 = 1 << 4, kPC9 = 1 << 5, kPC10 = 1 << 6,
 };
 
 // Reading an MSR the CPU lacks raises #GP (a kernel panic), so only CPUs
 // known to have them are measured. Family 6 client models with PC8-PC10
 // (Haswell-ULT onwards), per the Intel SDM.
 struct CpuModel { uint8_t model; uint32_t mask; };
-static const uint32_t kAllUpToTGL = kPC2 | kPC3 | kPC6 | kPC7 | kPC8 | kPC9 | kPC10 | kCC6 | kCC7;
-static const uint32_t kNewer      = kPC2 | kPC6 | kPC8 | kPC9 | kPC10 | kCC6 | kCC7;
+static const uint32_t kAllUpToTGL = kPC2 | kPC3 | kPC6 | kPC7 | kPC8 | kPC9 | kPC10;
+static const uint32_t kNewer      = kPC2 | kPC6 | kPC8 | kPC9 | kPC10;
 static const CpuModel kModels[] = {
 	{ 0x45, kAllUpToTGL },  // Haswell-ULT
 	{ 0x3D, kAllUpToTGL },  // Broadwell-U
@@ -145,6 +146,14 @@ static const CpuModel kModels[] = {
 	{ 0xB7, kNewer }, { 0xBA, kNewer }, { 0xBF, kNewer },   // Raptor Lake
 	{ 0xAA, kNewer }, { 0xAC, kNewer },             // Meteor Lake
 };
+
+// MSR_PKG_CST_CONFIG_CONTROL (0xE2), Skylake+ client encoding of bits 3:0.
+static const uint32_t kMsrPkgCstConfig = 0xE2;
+static const char *pkgLimitName(uint32_t v)
+{
+	static const char *const names[] = { "C0/C1", "C2", "C3", "C6", "C7", "C7S", "C8", "C9", "C10" };
+	return v < 9 ? names[v] : (v == 0xF ? "no limit" : "reserved");
+}
 
 // Returns the readable C-state mask for this CPU, 0 if unknown/unsupported.
 static uint32_t cstateSupport(uint32_t &modelOut)
@@ -205,6 +214,18 @@ bool S0ixStandby::start(IOService *provider)
 	cstateMask = bootArg("-s0ixnocst") ? 0 : cstateSupport(model);
 	setProperty("CPU model", (unsigned long long)model, 32);
 	setProperty("C-state meter", cstateMask != 0);
+	if (cstateMask) {
+		// Package C-state limit: a value below C10 caps how deep the package
+		// can go in Deep Idle, whatever the devices do.
+		uint64_t e2 = rdmsr(kMsrPkgCstConfig);
+		char buf[96];
+		snprintf(buf, sizeof(buf), "0x%llx: limit %s, CFG lock %s, pkg demotion %s/%s",
+		         (unsigned long long)e2, pkgLimitName((uint32_t)(e2 & 0xF)),
+		         (e2 & (1ULL << 15)) ? "on" : "off",
+		         (e2 & (1ULL << 27)) ? "on" : "off", (e2 & (1ULL << 28)) ? "undemote on" : "undemote off");
+		setProperty("PKG_CST_CONFIG_CONTROL", buf);
+		LOG("MSR 0xE2 %s", buf);
+	}
 
 	workLoop = IOWorkLoop::workLoop();
 	if (workLoop) {
@@ -487,7 +508,7 @@ void S0ixStandby::onSleep()
 	counterAtSleep = 0;
 	readCounter(counterAtSleep);
 	timeAtSleep = mach_absolute_time();
-	if (cstateMask) { readCStates(csAtSleep); tscAtSleep = rdtsc(); }
+	if (cstateMask) { readCStates(csAtSleep); tscAtSleep = rdtsc(); e2AtSleep = rdmsr(kMsrPkgCstConfig); }
 
 	entered = false;
 	if (dsmEnabled && lastSleepType == kSleepTypeDeepIdle &&
@@ -555,6 +576,10 @@ void S0ixStandby::publish()
 	if (cstateMask && tscAtWake > tscAtSleep) {
 		uint64_t tsc = tscAtWake - tscAtSleep;
 		setProperty("Last TSC ticks", (unsigned long long)tsc, 64);
+		char e2[48];
+		snprintf(e2, sizeof(e2), "0x%llx (limit %s)", (unsigned long long)e2AtSleep,
+		         pkgLimitName((uint32_t)(e2AtSleep & 0xF)));
+		setProperty("Last 0xE2 at sleep", e2);
 		if (OSDictionary *d = OSDictionary::withCapacity(kCStateCount)) {
 			char line[160]; size_t n = 0; line[0] = 0;
 			for (uint32_t i = 0; i < kCStateCount; i++) {

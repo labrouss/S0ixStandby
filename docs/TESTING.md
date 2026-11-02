@@ -144,3 +144,4 @@ Add one row per run.
 | 2026-11-02 | macOS 26.7.1 (25G241) | 01.19.00 | N2 step 2: kext 0.1.2, `_DSM` on | — | — | ? | **LED breathing** (EC got fn 3), **no wake** on power button or keys: hard reset |
 | 2026-11-02 | macOS 26.7.1 (25G241) | 01.19.00 | N2 test A: 0.1.3, `s0ixfn=0x60` (fn 5/6) | 1.1 min | — | 0 | **wakes cleanly**, LED solid; `_DSM` entry/exit ran; **PC10 = 0 %** over 64.5 s TSC |
 | 2026-11-02 | macOS 26.7.1 (25G241) | 01.19.00 | N2 (earlier): 0.1.2, all fn | — | — | ? | LED breathing, **no wake**: `Failure during sleep 0x1F` (wake never reached the CPU) |
+| 2026-11-02 | macOS 26.7.1 (25G241) | 01.19.00 | N2 test A: 0.1.4, `s0ixfn=0x60` | 10.1 min (TSC) | 2.17 | 0 | **PC6 95 %**, PC3 4 %, PC7–PC10 0 %: package capped at PC6 |

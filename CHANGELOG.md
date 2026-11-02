@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.5 (unreleased)
+
+- Read MSR 0xE2 (`PKG_CST_CONFIG_CONTROL`) at start and at each sleep: package
+  C-state limit, CFG lock, demotion bits (`PKG_CST_CONFIG_CONTROL`,
+  `Last 0xE2 at sleep`).
+- Core CC6/CC7 removed from the meter (per-core MSRs; the sleep and wake
+  actions may run on different cores, which produced garbage).
+
 ## 0.1.4 (unreleased)
 
 - **Fix:** MSRs are only read on a whitelist of Intel client models (Haswell-ULT

@@ -51,10 +51,11 @@ private:
 	uint64_t counterAddr {0};               // physical address from LPIT
 
 	// Package / core C-state residency MSRs (TSC rate) + TSC, per sleep.
-	enum { kCStateCount = 9 };
+	enum { kCStateCount = 7 };
 	uint32_t cstateMask {0};                 // which kCStates[] are readable here
 	uint64_t csAtSleep[kCStateCount] {}, csAtWake[kCStateCount] {};
 	uint64_t tscAtSleep {0}, tscAtWake {0};
+	uint64_t e2AtSleep {0};
 	void readCStates(uint64_t *out);
 
 	// Per-sleep bookkeeping, published after wake from a timer (not from the
