@@ -18,6 +18,8 @@ if [ -n "$TSC" ] && [ -n "$TSCF" ] && [ "$TSCF" -gt 0 ]; then
     s=t/f; printf "Asleep (TSC):  %.1f min\nS0ix (SLP_S0): %.1f %% (%.1f s)\n", s/60, (s>0?100*r/1e6/s:0), r/1e6 }'
   echo "C-states (% of sleep):"
   echo "$P" | grep '"Last C-state percent"' | sed 's/.*= {//; s/}$//; s/,/  /g; s/"//g; s/^/  /'
+  echo "Halt window on the boot CPU (% of halt):"
+  echo "$P" | grep '"Last halt C-state percent"' | sed 's/.*= {//; s/}$//; s/,/  /g; s/"//g; s/^/  /'
 else
   echo "(no C-state/TSC data yet: needs kext >= 0.1.4 and one sleep)"
 fi

@@ -119,9 +119,10 @@ struct CState { const char *name; uint32_t msr; };
 static const CState kCStates[] = {
 	{ "PC2", 0x60D }, { "PC3", 0x3F8 }, { "PC6", 0x3F9 }, { "PC7", 0x3FA },
 	{ "PC8", 0x630 }, { "PC9", 0x631 }, { "PC10", 0x632 },
-	// Core C-state MSRs are per core; the sleep and wake actions may run on
-	// different cores, so they are not used.
+	// Core C-state MSRs are per core: only read in the quiesce/active actions,
+	// which XNU runs on the boot CPU around the Deep Idle halt.
 };
+static const uint32_t kMsrCoreC6 = 0x3FD, kMsrCoreC7 = 0x3FE;
 enum : uint32_t {
 	kPC2 = 1 << 0, kPC3 = 1 << 1, kPC6 = 1 << 2, kPC7 = 1 << 3,
 	kPC8 = 1 << 4, kPC9 = 1 << 5, kPC10 = 1 << 6,
@@ -242,6 +243,11 @@ bool S0ixStandby::start(IOService *provider)
 	// after start() succeeds (IOService.cpp, IOInstallServiceSleepPlatformActions).
 	setProperty("IOPlatformSleepAction", (unsigned long long)kActionPriority, 32);
 	setProperty("IOPlatformWakeAction", (unsigned long long)kActionPriority, 32);
+	if (cstateMask) {
+		// Boot-CPU snapshot right around the Deep Idle halt (MSR reads only).
+		setProperty("IOPlatformQuiesceAction", (unsigned long long)kActionPriority, 32);
+		setProperty("IOPlatformActiveAction", (unsigned long long)kActionPriority, 32);
+	}
 
 	registerService();
 	LOG("started on %s (Intel 0x%x, Microsoft 0x%x, AMD 0x%x, dsm %s)",
@@ -482,6 +488,13 @@ bool S0ixStandby::readCounter(uint64_t &value)
 // Sleep / wake
 // ---------------------------------------------------------------------------
 
+void S0ixStandby::readHalt(uint64_t *out)
+{
+	out[0] = rdmsr(kMsrCoreC6);
+	out[1] = rdmsr(kMsrCoreC7);
+	readCStates(out + 2);
+}
+
 void S0ixStandby::readCStates(uint64_t *out)
 {
 	for (uint32_t i = 0; i < kCStateCount; i++)
@@ -494,6 +507,15 @@ IOReturn S0ixStandby::callPlatformFunction(const OSSymbol *functionName, bool wa
 	if (functionName) {
 		if (functionName->isEqualTo("IOPlatformSleepAction")) { onSleep(); return kIOReturnSuccess; }
 		if (functionName->isEqualTo("IOPlatformWakeAction"))  { onWake();  return kIOReturnSuccess; }
+		// Interrupts are disabled in these two: MSR reads only, no locks/logging.
+		if (functionName->isEqualTo("IOPlatformQuiesceAction")) {
+			if (cstateMask) { readHalt(haltAtQuiesce); tscAtQuiesce = rdtsc(); haltValid = false; }
+			return kIOReturnSuccess;
+		}
+		if (functionName->isEqualTo("IOPlatformActiveAction")) {
+			if (cstateMask && tscAtQuiesce) { readHalt(haltAtActive); tscAtActive = rdtsc(); haltValid = true; }
+			return kIOReturnSuccess;
+		}
 	}
 	return IOService::callPlatformFunction(functionName, waitForFunction, param1, param2, param3, param4);
 }
@@ -597,6 +619,27 @@ void S0ixStandby::publish()
 			LOG("wake #%u: C-states over %llu TSC ticks:%s", sleepCount, (unsigned long long)tsc, line);
 		}
 	}
+
+	if (haltValid && tscAtActive > tscAtQuiesce) {
+		uint64_t tsc = tscAtActive - tscAtQuiesce;
+		setProperty("Last halt TSC ticks", (unsigned long long)tsc, 64);
+		if (OSDictionary *d = OSDictionary::withCapacity(kHaltCount)) {
+			const char *names[kHaltCount];
+			names[0] = "CC6 (boot core)"; names[1] = "CC7 (boot core)";
+			for (uint32_t i = 0; i < kCStateCount; i++) names[2 + i] = kCStates[i].name;
+			for (uint32_t i = 0; i < kHaltCount; i++) {
+				if (i >= 2 && !(cstateMask & (1U << (i - 2)))) continue;
+				uint64_t pct = (haltAtActive[i] - haltAtQuiesce[i]) * 100 / tsc;
+				if (OSNumber *num = OSNumber::withNumber((unsigned long long)pct, 32)) {
+					d->setObject(names[i], num);
+					num->release();
+				}
+			}
+			setProperty("Last halt C-state percent", d);
+			d->release();
+		}
+	}
+	haltValid = false;
 
 	LOG("wake #%u: sleep type %u, SLP_S0 residency %llu us (%llu ticks)",
 	    sleepCount, lastSleepType, residencyUs, ticks);

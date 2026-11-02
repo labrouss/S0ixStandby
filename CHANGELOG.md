@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.6 (unreleased)
+
+- Halt-window meter: `IOPlatformQuiesceAction` / `IOPlatformActiveAction` run
+  on the boot CPU right around the Deep Idle halt (interrupts off, MSR reads
+  only) and record boot-core CC6/CC7 plus package C-states for exactly that
+  window (`Last halt C-state percent`, `Last halt TSC ticks`).
+
 ## 0.1.5 (unreleased)
 
 - Read MSR 0xE2 (`PKG_CST_CONFIG_CONTROL`) at start and at each sleep: package

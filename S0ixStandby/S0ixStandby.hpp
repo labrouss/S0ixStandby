@@ -56,6 +56,15 @@ private:
 	uint64_t csAtSleep[kCStateCount] {}, csAtWake[kCStateCount] {};
 	uint64_t tscAtSleep {0}, tscAtWake {0};
 	uint64_t e2AtSleep {0};
+
+	// Boot-CPU snapshot taken in IOPlatformQuiesceAction / ActiveAction, i.e.
+	// right around the Deep Idle halt, on the same core (interrupts off: MSR
+	// reads only). Core C6/C7 + package C-states + TSC.
+	enum { kHaltCount = 2 + kCStateCount };
+	uint64_t haltAtQuiesce[kHaltCount] {}, haltAtActive[kHaltCount] {};
+	uint64_t tscAtQuiesce {0}, tscAtActive {0};
+	bool haltValid {false};
+	void readHalt(uint64_t *out);
 	void readCStates(uint64_t *out);
 
 	// Per-sleep bookkeeping, published after wake from a timer (not from the
