@@ -140,3 +140,5 @@ Add one row per run.
 | 2026-11-02 | macOS 26.7.1 (25G241) | 01.19.00 | N2 step 1: kext 0.1.0 loads (`-s0ixnodsm`) | — | — | — | Intel `_DSM` mask 0x7F found; meter off (LPIT not found via registry property, fixed in 0.1.1) |
 | 2026-11-02 | macOS 26.7.1 (25G241) | 01.19.00 | N2 step 1: kext 0.1.1, `-s0ixnodsm`, ~16 min Deep Idle | ~16 min | ~0.7–1.2 (rough, from charge between runs) | ? | clean wake; script output lost to SSH drop. A 1.4 min run read 7.95 W: too short, discarded |
 | 2026-11-02 | macOS 26.7.1 (25G241) | 01.19.00 | N2 step 1: kext 0.1.1 status after 2 sleeps (~17.5 min) | ~17.5 min | — | **0** | `Last/Total residency us = 0`: no S0ix without `_DSM` (or counter unreadable; 0.1.2 adds raw counter + PC10 to tell) |
+| 2026-11-02 | macOS 26.7.1 (25G241) | 01.19.00 | N2 step 1: kext 0.1.1, `-s0ixnodsm` | 9.4 min | 2.27 | **0** | LED solid (expected: `_DSM` off); confirms ~2 W baseline, the earlier 0.7–1.2 W estimate was wrong |
+| 2026-11-02 | macOS 26.7.1 (25G241) | 01.19.00 | N2 step 2: kext 0.1.2, `_DSM` on | — | — | ? | **LED breathing** (EC got fn 3), **no wake** on power button or keys: hard reset |

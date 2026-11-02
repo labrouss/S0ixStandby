@@ -19,6 +19,9 @@
 //  Boot-args:  -s0ixoff    do not load
 //              -s0ixnodsm  meter only, never call _DSM
 //              -s0ixdbg    verbose logging
+//              s0ixfn=N    bitmask of _DSM functions allowed to run, e.g.
+//                          s0ixfn=0x18 = display off/on only (3,4),
+//                          s0ixfn=0x60 = entry/exit only (5,6). Default: all.
 //
 //  SPDX-License-Identifier: BSD-3-Clause
 //
@@ -146,6 +149,9 @@ bool S0ixStandby::start(IOService *provider)
 	}
 	gDebug = bootArg("-s0ixdbg");
 	dsmEnabled = !bootArg("-s0ixnodsm");
+	uint32_t fn = 0;
+	if (PE_parse_boot_argn("s0ixfn", &fn, sizeof(fn)))
+		fnAllow = fn;
 
 	if (!IOService::start(provider))
 		return false;
@@ -174,6 +180,7 @@ bool S0ixStandby::start(IOService *provider)
 	}
 
 	setProperty("DSM enabled", dsmEnabled);
+	setProperty("DSM function filter", (unsigned long long)fnAllow, 32);
 	setProperty("Sleep count", (unsigned long long)0, 32);
 
 	// Register for the sleep/wake platform action queues. XNU installs these
@@ -269,11 +276,16 @@ bool S0ixStandby::probeDsm()
 
 void S0ixStandby::runIf(Family family, uint32_t function)
 {
-	if (dsmMask[family] & (1U << function)) {
-		IOReturn r = callDsm(family, function);
-		if (r != kIOReturnSuccess)
-			LOG("_DSM %s fn %u failed: 0x%x", kFamilyName[family], function, r);
+	if (!(dsmMask[family] & (1U << function)))
+		return;
+	if (!(fnAllow & (1U << function))) {
+		DBG("_DSM %s fn %u skipped (s0ixfn)", kFamilyName[family], function);
+		return;
 	}
+	DBG("_DSM %s fn %u ...", kFamilyName[family], function);
+	IOReturn r = callDsm(family, function);
+	if (r != kIOReturnSuccess)
+		LOG("_DSM %s fn %u failed: 0x%x", kFamilyName[family], function, r);
 }
 
 // Order follows the specs (and Linux s2idle): display off, then entry.

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.3 (unreleased)
+
+- `s0ixfn=<mask>` boot-arg: only run the listed `_DSM` functions (bisecting
+  wake problems), shown as `DSM function filter`. `-s0ixdbg` logs each call.
+
 ## 0.1.2 (unreleased)
 
 - Package C10 meter (Intel MSR 0x632 vs TSC, GenuineIntel family 6 with LPIT

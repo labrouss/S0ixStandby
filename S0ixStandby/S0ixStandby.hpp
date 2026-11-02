@@ -40,6 +40,7 @@ private:
 	IOACPIPlatformDevice *lps0 {nullptr};
 	uint32_t dsmMask[kFamilyCount] {};      // function-0 support masks (bit n = function n)
 	bool dsmEnabled {true};                 // false with -s0ixnodsm (meter only)
+	uint32_t fnAllow {0xFFFFFFFF};          // s0ixfn=<mask>: functions allowed to run
 	bool entered {false};                   // _DSM entry sequence ran for this sleep
 
 	// SLP_S0 residency counter from LPIT (SystemMemory GAS only for now)
