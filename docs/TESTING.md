@@ -149,3 +149,4 @@ Add one row per run.
 | 2026-11-02 | macOS 26.7.1 (25G241) | 01.19.00 | N2 test A: 0.1.4, `s0ixfn=0x60` | 3.4 min (TSC) | 2.17 | 0 | **PC6 95 %**, PC3 4 %, PC7–PC10 0 %: package capped at PC6 |
 | 2026-11-02 | macOS 26.7.1 (25G241) | 01.19.00 | N2 test A: 0.1.5, `s0ixfn=0x60` | 2.9 min (TSC) | 2.34 | 0 | PC6 95 %, PC3 4 % again; **MSR 0xE2 = 0x74008008: limit C10**, CFG lock on, same at sleep: not a package limit |
 | 2026-11-02 | macOS 26.7.1 (25G241) | 01.19.00 | N2 test A: 0.1.5, `s0ixfn=0x60`, **CPUID spoof Ice Lake** | 3.4 min (TSC) | 1.57 | 0 | **PC10 99 %**, XCPM CC7 99 % / C10 99 %; wakes. SLP_S0 still 0 |
+| 2026-11-02 | macOS 26.7.1 (25G241) | 01.19.00 | N2: 0.1.6, **all `_DSM` fn**, Ice Lake spoof | 2.9 min (TSC) | 3.37 (too short) | 0 | **LED breathing and clean wake**; boot core CC7 99 %, PC10 99 %; SLP_S0 still 0 |

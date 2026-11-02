@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.7 (unreleased)
+
+- `-s0ixpmcdump`: snapshot of the 4 KB PMC page holding the SLP_S0 counter
+  (IP power-gating status, LTRs, ...) at boot and inside the Deep Idle halt
+  (`PMC page at boot` / `at halt`); `macos/pmc-dump.sh` saves them as text.
+  The counter mapping now covers its whole page.
+
 ## 0.1.6 (unreleased)
 
 - Halt-window meter: `IOPlatformQuiesceAction` / `IOPlatformActiveAction` run

@@ -65,6 +65,14 @@ private:
 	uint64_t tscAtQuiesce {0}, tscAtActive {0};
 	bool haltValid {false};
 	void readHalt(uint64_t *out);
+
+	// Optional (-s0ixpmcdump): snapshot of the 4 KB PMC page that holds the
+	// SLP_S0 counter (IP power-gating status, LTRs, ...), at boot and at the
+	// Deep Idle halt. Read-only MMIO.
+	volatile uint32_t *counterPage {nullptr};
+	bool pmcDump {false};
+	uint32_t pmcAtBoot[1024] {}, pmcAtHalt[1024] {};
+	bool pmcHaltValid {false};
 	void readCStates(uint64_t *out);
 
 	// Per-sleep bookkeeping, published after wake from a timer (not from the

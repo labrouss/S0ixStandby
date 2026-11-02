@@ -19,6 +19,8 @@
 //  Boot-args:  -s0ixoff    do not load
 //              -s0ixnodsm  meter only, never call _DSM
 //              -s0ixdbg    verbose logging
+//              -s0ixpmcdump snapshot the PMC register page (with the SLP_S0
+//                          counter) at boot and at each Deep Idle halt
 //              s0ixfn=N    bitmask of _DSM functions allowed to run, e.g.
 //                          s0ixfn=0x18 = display off/on only (3,4),
 //                          s0ixfn=0x60 = entry/exit only (5,6). Default: all.
@@ -190,6 +192,7 @@ bool S0ixStandby::start(IOService *provider)
 		return false;
 	}
 	gDebug = bootArg("-s0ixdbg");
+	pmcDump = bootArg("-s0ixpmcdump");
 	dsmEnabled = !bootArg("-s0ixnodsm");
 	uint32_t fn = 0;
 	if (PE_parse_boot_argn("s0ixfn", &fn, sizeof(fn)))
@@ -211,6 +214,17 @@ bool S0ixStandby::start(IOService *provider)
 	bool meter = setupMeter();
 	if (!meter)
 		LOG("no usable LPIT SLP_S0 counter; residency will not be reported");
+	if (pmcDump && counterPage) {
+		for (uint32_t i = 0; i < 1024; i++) pmcAtBoot[i] = counterPage[i];
+		if (OSData *d = OSData::withBytes(pmcAtBoot, sizeof(pmcAtBoot))) {
+			setProperty("PMC page at boot", d);
+			d->release();
+		}
+		char hex[24];
+		snprintf(hex, sizeof(hex), "0x%llx", (unsigned long long)(counterAddr & ~0xFFFULL));
+		setProperty("PMC page address", hex);
+	}
+
 	uint32_t model = 0;
 	cstateMask = bootArg("-s0ixnocst") ? 0 : cstateSupport(model);
 	setProperty("CPU model", (unsigned long long)model, 32);
@@ -243,8 +257,8 @@ bool S0ixStandby::start(IOService *provider)
 	// after start() succeeds (IOService.cpp, IOInstallServiceSleepPlatformActions).
 	setProperty("IOPlatformSleepAction", (unsigned long long)kActionPriority, 32);
 	setProperty("IOPlatformWakeAction", (unsigned long long)kActionPriority, 32);
-	if (cstateMask) {
-		// Boot-CPU snapshot right around the Deep Idle halt (MSR reads only).
+	if (cstateMask || (pmcDump && counterPage)) {
+		// Boot-CPU snapshot right around the Deep Idle halt (MSR/MMIO reads only).
 		setProperty("IOPlatformQuiesceAction", (unsigned long long)kActionPriority, 32);
 		setProperty("IOPlatformActiveAction", (unsigned long long)kActionPriority, 32);
 	}
@@ -270,6 +284,7 @@ void S0ixStandby::free()
 	OSSafeReleaseNULL(publishTimer);
 	OSSafeReleaseNULL(workLoop);
 	counter = nullptr;
+	counterPage = nullptr;
 	OSSafeReleaseNULL(counterMap);
 	OSSafeReleaseNULL(lps0);
 	IOService::free();
@@ -434,14 +449,19 @@ bool S0ixStandby::setupMeter()
 		// Prefer the last enabled descriptor with a SystemMemory counter: on
 		// Intel client platforms that is the SLP_S0 (S0ix) residency counter.
 		if (type == 0 && !disabled && !noCounter && space == 0 && addr && (bits == 32 || bits == 64)) {
-			IOMemoryDescriptor *md = IOMemoryDescriptor::withPhysicalAddress(addr, bits / 8, kIODirectionIn);
+			// Map the whole 4 KB page (same MMIO page; lets -s0ixpmcdump read
+			// its neighbours too). The counter must not straddle the page.
+			uint64_t page = addr & ~0xFFFULL, pageOff = addr & 0xFFF;
+			IOMemoryDescriptor *md = (pageOff + bits / 8 <= 0x1000)
+				? IOMemoryDescriptor::withPhysicalAddress(page, 0x1000, kIODirectionIn) : nullptr;
 			if (md) {
 				IOMemoryMap *map = md->map(kIOMapInhibitCache);
 				md->release();
 				if (map) {
 					OSSafeReleaseNULL(counterMap);
 					counterMap = map;
-					counter = reinterpret_cast<volatile uint32_t *>(map->getVirtualAddress());
+					counterPage = reinterpret_cast<volatile uint32_t *>(map->getVirtualAddress());
+					counter = reinterpret_cast<volatile uint32_t *>(map->getVirtualAddress() + pageOff);
 					counterBits = bits;
 					counterFreq = freq;
 					counterAddr = addr;
@@ -510,6 +530,10 @@ IOReturn S0ixStandby::callPlatformFunction(const OSSymbol *functionName, bool wa
 		// Interrupts are disabled in these two: MSR reads only, no locks/logging.
 		if (functionName->isEqualTo("IOPlatformQuiesceAction")) {
 			if (cstateMask) { readHalt(haltAtQuiesce); tscAtQuiesce = rdtsc(); haltValid = false; }
+			if (pmcDump && counterPage) {
+				for (uint32_t i = 0; i < 1024; i++) pmcAtHalt[i] = counterPage[i];
+				pmcHaltValid = true;
+			}
 			return kIOReturnSuccess;
 		}
 		if (functionName->isEqualTo("IOPlatformActiveAction")) {
@@ -640,6 +664,14 @@ void S0ixStandby::publish()
 		}
 	}
 	haltValid = false;
+
+	if (pmcHaltValid) {
+		if (OSData *d = OSData::withBytes(pmcAtHalt, sizeof(pmcAtHalt))) {
+			setProperty("PMC page at halt", d);
+			d->release();
+		}
+		pmcHaltValid = false;
+	}
 
 	LOG("wake #%u: sleep type %u, SLP_S0 residency %llu us (%llu ticks)",
 	    sleepCount, lastSleepType, residencyUs, ticks);
