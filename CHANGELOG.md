@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.4 (unreleased)
+
+- **Fix:** MSRs are only read on a whitelist of Intel client models (Haswell-ULT
+  to Meteor Lake); 0.1.2/0.1.3 read MSR 0x632 on any family-6 CPU, which
+  panics CPUs without it.
+- C-state meter: PC2/3/6/7/8/9/10 and core CC6/CC7 share of each sleep
+  (`Last C-state percent`); `-s0ixnocst` disables it. Replaces the PC10-only
+  properties.
+
 ## 0.1.3 (unreleased)
 
 - `s0ixfn=<mask>` boot-arg: only run the listed `_DSM` functions (bisecting

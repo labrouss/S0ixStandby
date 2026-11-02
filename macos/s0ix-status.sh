@@ -6,18 +6,20 @@ echo "== kext"
 kextstat 2>/dev/null | grep -i s0ixstandby || kmutil showloaded 2>/dev/null | grep -i s0ixstandby || echo "S0ixStandby not loaded"
 echo
 echo "== S0ixStandby properties"
-ioreg -rd1 -c S0ixStandby -w0 | grep -E '"(DSM|LPIT|PC10|Sleep count|Last|Total|Residency)' || echo "(no S0ixStandby service)"
+ioreg -rd1 -c S0ixStandby -w0 | grep -E '"(DSM|LPIT|C-state meter|CPU model|Sleep count|Last|Total|Residency)' || echo "(no S0ixStandby service)"
 echo
 echo "== Last sleep (computed)"
 P=$(ioreg -rd1 -c S0ixStandby -w0)
 val() { echo "$P" | awk -F' = ' -v k="\"$1\"" '$1 ~ k {gsub(/[ "]/,"",$2); print $2; exit}'; }
 TSCF=$(sysctl -n machdep.tsc.frequency 2>/dev/null)
-TSC=$(val "Last TSC ticks"); RES=$(val "Last residency us"); PC10=$(val "Last PC10 percent")
+TSC=$(val "Last TSC ticks"); RES=$(val "Last residency us")
 if [ -n "$TSC" ] && [ -n "$TSCF" ] && [ "$TSCF" -gt 0 ]; then
-  awk -v t="$TSC" -v f="$TSCF" -v r="${RES:-0}" -v p="${PC10:-?}" 'BEGIN{
-    s=t/f; printf "Asleep (TSC): %.1f min\nPC10:         %s %%\nS0ix (SLP_S0): %.1f %% (%.1f s)\n", s/60, p, (s>0?100*r/1e6/s:0), r/1e6 }'
+  awk -v t="$TSC" -v f="$TSCF" -v r="${RES:-0}" 'BEGIN{
+    s=t/f; printf "Asleep (TSC):  %.1f min\nS0ix (SLP_S0): %.1f %% (%.1f s)\n", s/60, (s>0?100*r/1e6/s:0), r/1e6 }'
+  echo "C-states (% of sleep):"
+  echo "$P" | grep '"Last C-state percent"' | sed 's/.*= {//; s/}$//; s/,/  /g; s/"//g; s/^/  /'
 else
-  echo "(no PC10/TSC data yet: needs kext >= 0.1.2 and one sleep)"
+  echo "(no C-state/TSC data yet: needs kext >= 0.1.4 and one sleep)"
 fi
 echo
 echo "== Deep Idle"

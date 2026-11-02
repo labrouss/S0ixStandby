@@ -114,21 +114,53 @@ static inline uint64_t rdtsc()
 	return ((uint64_t)hi << 32) | lo;
 }
 
-static const uint32_t kMsrPkgC10Residency = 0x632;   // Intel SDM: MSR_PKG_C10_RESIDENCY
+// C-state residency MSRs (Intel SDM vol. 4). All count at TSC rate.
+struct CState { const char *name; uint32_t msr; };
+static const CState kCStates[] = {
+	{ "PC2", 0x60D }, { "PC3", 0x3F8 }, { "PC6", 0x3F9 }, { "PC7", 0x3FA },
+	{ "PC8", 0x630 }, { "PC9", 0x631 }, { "PC10", 0x632 },
+	{ "CC6", 0x3FD }, { "CC7", 0x3FE },      // core of the CPU running the sleep path
+};
+enum : uint32_t {
+	kPC2 = 1 << 0, kPC3 = 1 << 1, kPC6 = 1 << 2, kPC7 = 1 << 3,
+	kPC8 = 1 << 4, kPC9 = 1 << 5, kPC10 = 1 << 6, kCC6 = 1 << 7, kCC7 = 1 << 8,
+};
 
-// PC10 residency MSR exists on Intel client CPUs from Haswell-ULT on. Only
-// read it on GenuineIntel family 6 with LPIT present (S0ix-class platform);
-// anything else would risk a #GP.
-static bool pc10Supported(bool lpitPresent)
+// Reading an MSR the CPU lacks raises #GP (a kernel panic), so only CPUs
+// known to have them are measured. Family 6 client models with PC8-PC10
+// (Haswell-ULT onwards), per the Intel SDM.
+struct CpuModel { uint8_t model; uint32_t mask; };
+static const uint32_t kAllUpToTGL = kPC2 | kPC3 | kPC6 | kPC7 | kPC8 | kPC9 | kPC10 | kCC6 | kCC7;
+static const uint32_t kNewer      = kPC2 | kPC6 | kPC8 | kPC9 | kPC10 | kCC6 | kCC7;
+static const CpuModel kModels[] = {
+	{ 0x45, kAllUpToTGL },  // Haswell-ULT
+	{ 0x3D, kAllUpToTGL },  // Broadwell-U
+	{ 0x4E, kAllUpToTGL }, { 0x5E, kAllUpToTGL },   // Skylake
+	{ 0x8E, kAllUpToTGL }, { 0x9E, kAllUpToTGL },   // Kaby/Coffee/Whiskey/Amber Lake
+	{ 0x66, kAllUpToTGL },  // Cannon Lake
+	{ 0x7D, kAllUpToTGL }, { 0x7E, kAllUpToTGL },   // Ice Lake
+	{ 0xA5, kAllUpToTGL }, { 0xA6, kAllUpToTGL },   // Comet Lake
+	{ 0x8C, kAllUpToTGL }, { 0x8D, kAllUpToTGL },   // Tiger Lake
+	{ 0x97, kNewer }, { 0x9A, kNewer }, { 0xBE, kNewer },   // Alder Lake
+	{ 0xB7, kNewer }, { 0xBA, kNewer }, { 0xBF, kNewer },   // Raptor Lake
+	{ 0xAA, kNewer }, { 0xAC, kNewer },             // Meteor Lake
+};
+
+// Returns the readable C-state mask for this CPU, 0 if unknown/unsupported.
+static uint32_t cstateSupport(uint32_t &modelOut)
 {
-	if (!lpitPresent) return false;
 	uint32_t a, b, c, d;
 	cpuid(0, a, b, c, d);
 	if (!(b == 0x756e6547 && d == 0x49656e69 && c == 0x6c65746e))   // "GenuineIntel"
-		return false;
+		return 0;
 	cpuid(1, a, b, c, d);
 	uint32_t family = (a >> 8) & 0xF;
-	return family == 6;
+	uint32_t model = ((a >> 4) & 0xF) | (((a >> 16) & 0xF) << 4);
+	modelOut = model;
+	if (family != 6) return 0;
+	for (const auto &m : kModels)
+		if (m.model == model) return m.mask;
+	return 0;
 }
 
 static bool bootArg(const char *name)
@@ -169,8 +201,10 @@ bool S0ixStandby::start(IOService *provider)
 	bool meter = setupMeter();
 	if (!meter)
 		LOG("no usable LPIT SLP_S0 counter; residency will not be reported");
-	pc10Available = pc10Supported(meter) && !bootArg("-s0ixnopc10");
-	setProperty("PC10 meter", pc10Available);
+	uint32_t model = 0;
+	cstateMask = bootArg("-s0ixnocst") ? 0 : cstateSupport(model);
+	setProperty("CPU model", (unsigned long long)model, 32);
+	setProperty("C-state meter", cstateMask != 0);
 
 	workLoop = IOWorkLoop::workLoop();
 	if (workLoop) {
@@ -427,6 +461,12 @@ bool S0ixStandby::readCounter(uint64_t &value)
 // Sleep / wake
 // ---------------------------------------------------------------------------
 
+void S0ixStandby::readCStates(uint64_t *out)
+{
+	for (uint32_t i = 0; i < kCStateCount; i++)
+		out[i] = (cstateMask & (1U << i)) ? rdmsr(kCStates[i].msr) : 0;
+}
+
 IOReturn S0ixStandby::callPlatformFunction(const OSSymbol *functionName, bool waitForFunction,
                                            void *param1, void *param2, void *param3, void *param4)
 {
@@ -447,7 +487,7 @@ void S0ixStandby::onSleep()
 	counterAtSleep = 0;
 	readCounter(counterAtSleep);
 	timeAtSleep = mach_absolute_time();
-	if (pc10Available) { pc10AtSleep = rdmsr(kMsrPkgC10Residency); tscAtSleep = rdtsc(); }
+	if (cstateMask) { readCStates(csAtSleep); tscAtSleep = rdtsc(); }
 
 	entered = false;
 	if (dsmEnabled && lastSleepType == kSleepTypeDeepIdle &&
@@ -467,7 +507,7 @@ void S0ixStandby::onWake()
 	counterAtWake = 0;
 	readCounter(counterAtWake);
 	timeAtWake = mach_absolute_time();
-	if (pc10Available) { pc10AtWake = rdmsr(kMsrPkgC10Residency); tscAtWake = rdtsc(); }
+	if (cstateMask) { readCStates(csAtWake); tscAtWake = rdtsc(); }
 	sleepCount++;
 	pendingPublish = true;
 
@@ -510,15 +550,27 @@ void S0ixStandby::publish()
 	setProperty("Last action span ns", (unsigned long long)ns, 64);
 	setProperty("Residency counter at wake", (unsigned long long)counterAtWake, 64);
 
-	// PC10 share of the sleep: both counters run at TSC rate, and the TSC
+	// C-state shares of the sleep: all counters run at TSC rate, and the TSC
 	// keeps counting through Deep Idle (unlike rebased mach_absolute_time).
-	if (pc10Available && tscAtWake > tscAtSleep) {
-		uint64_t pc10 = pc10AtWake - pc10AtSleep, tsc = tscAtWake - tscAtSleep;
-		setProperty("Last PC10 ticks", (unsigned long long)pc10, 64);
+	if (cstateMask && tscAtWake > tscAtSleep) {
+		uint64_t tsc = tscAtWake - tscAtSleep;
 		setProperty("Last TSC ticks", (unsigned long long)tsc, 64);
-		setProperty("Last PC10 percent", (unsigned long long)(pc10 * 100 / tsc), 32);
-		LOG("wake #%u: PC10 %llu%% of %llu TSC ticks", sleepCount,
-		    (unsigned long long)(pc10 * 100 / tsc), (unsigned long long)tsc);
+		if (OSDictionary *d = OSDictionary::withCapacity(kCStateCount)) {
+			char line[160]; size_t n = 0; line[0] = 0;
+			for (uint32_t i = 0; i < kCStateCount; i++) {
+				if (!(cstateMask & (1U << i))) continue;
+				uint64_t pct = (csAtWake[i] - csAtSleep[i]) * 100 / tsc;
+				if (OSNumber *num = OSNumber::withNumber((unsigned long long)pct, 32)) {
+					d->setObject(kCStates[i].name, num);
+					num->release();
+				}
+				if (n < sizeof(line))
+					n += snprintf(line + n, sizeof(line) - n, " %s=%llu%%", kCStates[i].name, (unsigned long long)pct);
+			}
+			setProperty("Last C-state percent", d);
+			d->release();
+			LOG("wake #%u: C-states over %llu TSC ticks:%s", sleepCount, (unsigned long long)tsc, line);
+		}
 	}
 
 	LOG("wake #%u: sleep type %u, SLP_S0 residency %llu us (%llu ticks)",

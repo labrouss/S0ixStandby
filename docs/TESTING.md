@@ -142,3 +142,5 @@ Add one row per run.
 | 2026-11-02 | macOS 26.7.1 (25G241) | 01.19.00 | N2 step 1: kext 0.1.1 status after 2 sleeps (~17.5 min) | ~17.5 min | — | **0** | `Last/Total residency us = 0`: no S0ix without `_DSM` (or counter unreadable; 0.1.2 adds raw counter + PC10 to tell) |
 | 2026-11-02 | macOS 26.7.1 (25G241) | 01.19.00 | N2 step 1: kext 0.1.1, `-s0ixnodsm` | 9.4 min | 2.27 | **0** | LED solid (expected: `_DSM` off); confirms ~2 W baseline, the earlier 0.7–1.2 W estimate was wrong |
 | 2026-11-02 | macOS 26.7.1 (25G241) | 01.19.00 | N2 step 2: kext 0.1.2, `_DSM` on | — | — | ? | **LED breathing** (EC got fn 3), **no wake** on power button or keys: hard reset |
+| 2026-11-02 | macOS 26.7.1 (25G241) | 01.19.00 | N2 test A: 0.1.3, `s0ixfn=0x60` (fn 5/6) | 1.1 min | — | 0 | **wakes cleanly**, LED solid; `_DSM` entry/exit ran; **PC10 = 0 %** over 64.5 s TSC |
+| 2026-11-02 | macOS 26.7.1 (25G241) | 01.19.00 | N2 (earlier): 0.1.2, all fn | — | — | ? | LED breathing, **no wake**: `Failure during sleep 0x1F` (wake never reached the CPU) |

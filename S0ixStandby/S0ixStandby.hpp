@@ -50,9 +50,12 @@ private:
 	uint64_t counterFreq {0};               // Hz; 0 = unknown
 	uint64_t counterAddr {0};               // physical address from LPIT
 
-	// Package C10 residency (Intel MSR 0x632, TSC rate) + TSC, per sleep.
-	bool pc10Available {false};
-	uint64_t pc10AtSleep {0}, pc10AtWake {0}, tscAtSleep {0}, tscAtWake {0};
+	// Package / core C-state residency MSRs (TSC rate) + TSC, per sleep.
+	enum { kCStateCount = 9 };
+	uint32_t cstateMask {0};                 // which kCStates[] are readable here
+	uint64_t csAtSleep[kCStateCount] {}, csAtWake[kCStateCount] {};
+	uint64_t tscAtSleep {0}, tscAtWake {0};
+	void readCStates(uint64_t *out);
 
 	// Per-sleep bookkeeping, published after wake from a timer (not from the
 	// platform-action context).
