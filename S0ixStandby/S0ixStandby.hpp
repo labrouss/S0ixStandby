@@ -103,6 +103,18 @@ private:
 	IOTimerEventSource *liveTimer {nullptr};
 	static void liveTimerFired(OSObject *owner, IOTimerEventSource *sender);
 	void d3Enter();
+
+	// -s0ixd3net: network-class PCI functions WITH a driver (e.g. CNVi Wi-Fi)
+	// go to D3hot in the sleep action (all drivers already asleep) and back
+	// to D0 in the wake action (before any driver wakes), like the Linux PCI
+	// core does on suspend. Deep Idle only.
+	bool d3Net {false};
+	IOPCIDevice *netDev[kMaxD3] {};
+	UInt8 netCap[kMaxD3] {};
+	uint32_t netCount {0};
+	bool netInD3 {false};
+	void netEnter();
+	void netExit();
 	static void scanTimerFired(OSObject *owner, IOTimerEventSource *sender);
 	void readCStates(uint64_t *out);
 

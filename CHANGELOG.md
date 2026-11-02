@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.11 (unreleased)
+
+- `-s0ixd3net`: network-class PCI functions **with** a driver (e.g. CNVi Wi-Fi)
+  go to D3hot in the sleep action (drivers already asleep) and back to D0 in
+  the wake action (before drivers wake), as the Linux PCI core does on
+  suspend. AirportItlwm stops the NIC on sleep but leaves the PCI function in
+  D0. List in `D3 sleep network devices`.
+
 ## 0.1.10 (unreleased)
 
 - `-s0ixd3`: driverless endpoints are now kept in D3hot from the boot scan on

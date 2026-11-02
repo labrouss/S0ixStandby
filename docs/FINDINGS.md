@@ -111,6 +111,16 @@ happened, then the switch to full wake on the power button never finished. The
 trigger is unknown; suspect the graphics path (WhateverXe), as with every
 other wake failure.
 
+## 7. AirportItlwm sleep path (laobamac/itlwm, 2026-11-01 HEAD)
+
+`setPowerState(Off)` → `setPowerStateOff()` → `disableAdapter()` →
+`ItlIwx::disable()` → `iwx_activate(DVACT_QUIESCE)` → `iwx_stop()`: DMA stop,
+`iwx_apm_stop()` (low-power state), SW reset, RF-kill interrupt re-armed;
+the same sequence as OpenBSD/Linux. **The PCI function itself is never put in
+D3hot** (`IOPCIEDeviceWrapper::setPowerState` only acks). Linux's PCI core
+does that after the driver's suspend. Test: S0ixStandby `-s0ixd3net`.
+Bluetooth (IntelBTUnified) not analysed yet.
+
 ## Still to capture
 
 - A 30–60 min run of `s2idle-test.sh` for a tighter power number.

@@ -21,6 +21,8 @@
 //              -s0ixdbg    verbose logging
 //              -s0ixd3     keep driverless PCI endpoints in D3hot (from 60 s after
 //                          boot, re-applied before each Deep Idle)
+//              -s0ixd3net  network-class PCI functions with a driver to D3hot
+//                          for each Deep Idle (D0 again before drivers wake)
 //              -s0ixpmcdump snapshot the PMC register page (with the SLP_S0
 //                          counter) at boot and at each Deep Idle halt
 //              s0ixfn=N    bitmask of _DSM functions allowed to run, e.g.
@@ -196,6 +198,7 @@ bool S0ixStandby::start(IOService *provider)
 	gDebug = bootArg("-s0ixdbg");
 	pmcDump = bootArg("-s0ixpmcdump");
 	d3Unbound = bootArg("-s0ixd3");
+	d3Net = bootArg("-s0ixd3net");
 	dsmEnabled = !bootArg("-s0ixnodsm");
 	uint32_t fn = 0;
 	if (PE_parse_boot_argn("s0ixfn", &fn, sizeof(fn)))
@@ -251,7 +254,7 @@ bool S0ixStandby::start(IOService *provider)
 		publishTimer = IOTimerEventSource::timerEventSource(this, &S0ixStandby::publishTimerFired);
 		if (publishTimer && workLoop->addEventSource(publishTimer) != kIOReturnSuccess)
 			OSSafeReleaseNULL(publishTimer);
-		if (d3Unbound) {
+		if (d3Unbound || d3Net) {
 			d3Lock = IOLockAlloc();
 			scanTimer = IOTimerEventSource::timerEventSource(this, &S0ixStandby::scanTimerFired);
 			if (scanTimer && workLoop->addEventSource(scanTimer) != kIOReturnSuccess)
@@ -262,6 +265,7 @@ bool S0ixStandby::start(IOService *provider)
 		}
 	}
 	setProperty("D3 unbound devices", d3Unbound);
+	setProperty("D3 network devices", d3Net);
 
 	setProperty("DSM enabled", dsmEnabled);
 	{
@@ -320,6 +324,8 @@ void S0ixStandby::free()
 	OSSafeReleaseNULL(workLoop);
 	for (uint32_t i = 0; i < d3Count; i++) OSSafeReleaseNULL(d3Dev[i]);
 	d3Count = 0;
+	for (uint32_t i = 0; i < netCount; i++) OSSafeReleaseNULL(netDev[i]);
+	netCount = 0;
 	if (d3Lock) { IOLockFree(d3Lock); d3Lock = nullptr; }
 	counter = nullptr;
 	counterPage = nullptr;
@@ -659,7 +665,7 @@ void S0ixStandby::scanTimerFired(OSObject *owner, IOTimerEventSource *)
 
 void S0ixStandby::scanUnbound()
 {
-	if (!d3Unbound || !d3Lock) return;
+	if ((!d3Unbound && !d3Net) || !d3Lock) return;
 	OSDictionary *match = serviceMatching("IOPCIDevice");
 	if (!match) return;
 	OSIterator *it = getMatchingServices(match);
@@ -669,14 +675,37 @@ void S0ixStandby::scanUnbound()
 	IOPCIDevice *found[kMaxD3] {};
 	UInt8 cap[kMaxD3] {};
 	uint32_t n = 0;
+	IOPCIDevice *nfound[kMaxD3] {};
+	UInt8 ncap[kMaxD3] {};
+	uint32_t nn = 0;
 	OSArray *names = OSArray::withCapacity(kMaxD3);
+	OSArray *nnames = OSArray::withCapacity(kMaxD3);
 
 	while (OSObject *o = it->getNextObject()) {
 		IOPCIDevice *dev = OSDynamicCast(IOPCIDevice, o);
-		if (!dev || dev->getClient())                 // has a driver (or a nub)
+		if (!dev)
 			continue;
 		uint32_t cls = dev->configRead32(kIOPCIConfigClassCode) >> 8;   // class/subclass/prog-if
 		uint8_t base = (cls >> 16) & 0xFF;
+		if (dev->getClient()) {                       // has a driver
+			UInt8 pm = 0;
+			if (d3Net && base == 0x02 && nn < kMaxD3 &&
+			    dev->findPCICapability(kIOPCIPowerManagementCapability, &pm) && pm) {
+				dev->retain();
+				nfound[nn] = dev; ncap[nn] = pm; nn++;
+				if (nnames) {
+					char buf[48];
+					uint32_t id = dev->configRead32(kIOPCIConfigVendorID);
+					snprintf(buf, sizeof(buf), "%02x:%02x.%x %04x:%04x class %06x",
+					         dev->getBusNumber(), dev->getDeviceNumber(), dev->getFunctionNumber(),
+					         id & 0xFFFF, id >> 16, cls);
+					if (OSString *str = OSString::withCString(buf)) { nnames->setObject(str); str->release(); }
+				}
+			}
+			continue;
+		}
+		if (!d3Unbound)
+			continue;
 		if (base == 0x06 || base == 0x03 || base == 0x05)   // bridges, display, memory: never
 			continue;
 		UInt8 pm = 0;
@@ -702,9 +731,17 @@ void S0ixStandby::scanUnbound()
 	for (uint32_t i = 0; i < d3Count; i++) OSSafeReleaseNULL(d3Dev[i]);
 	for (uint32_t i = 0; i < n; i++) { d3Dev[i] = found[i]; d3Cap[i] = cap[i]; }
 	d3Count = n;
+	if (!netInD3) {
+		for (uint32_t i = 0; i < netCount; i++) OSSafeReleaseNULL(netDev[i]);
+		for (uint32_t i = 0; i < nn; i++) { netDev[i] = nfound[i]; netCap[i] = ncap[i]; }
+		netCount = nn;
+	} else {
+		for (uint32_t i = 0; i < nn; i++) OSSafeReleaseNULL(nfound[i]);
+	}
 	IOLockUnlock(d3Lock);
 
-	if (names) { setProperty("D3 devices", names); names->release(); }
+	if (nnames) { if (d3Net) setProperty("D3 sleep network devices", nnames); nnames->release(); }
+	if (names) { if (d3Unbound) setProperty("D3 devices", names); names->release(); }
 	LOG("%u driverless PCI endpoint(s) put in D3hot", n);
 
 	// They have no driver, so nothing uses them: keep them in D3hot while
@@ -734,6 +771,33 @@ void S0ixStandby::d3Enter()
 	IOLockUnlock(d3Lock);
 }
 
+
+void S0ixStandby::netEnter()
+{
+	if (!d3Net || !d3Lock || netInD3) return;
+	IOLockLock(d3Lock);
+	for (uint32_t i = 0; i < netCount; i++) {
+		UInt16 pmcsr = netDev[i]->configRead16(netCap[i] + 4);
+		if ((pmcsr & 3) == 0)
+			netDev[i]->configWrite16(netCap[i] + 4, (UInt16)((pmcsr & ~3) | 3));
+	}
+	netInD3 = netCount != 0;
+	IOLockUnlock(d3Lock);
+}
+
+void S0ixStandby::netExit()
+{
+	if (!netInD3 || !d3Lock) return;
+	IOLockLock(d3Lock);
+	for (uint32_t i = 0; i < netCount; i++) {
+		UInt16 pmcsr = netDev[i]->configRead16(netCap[i] + 4);
+		if ((pmcsr & 3) == 3)
+			netDev[i]->configWrite16(netCap[i] + 4, (UInt16)(pmcsr & ~3));
+	}
+	netInD3 = false;
+	IOLockUnlock(d3Lock);
+	IODelay(10000);   // PCI PM: 10 ms D3hot -> D0 recovery, before drivers wake
+}
 
 // ---------------------------------------------------------------------------
 // Sleep / wake
@@ -791,8 +855,10 @@ void S0ixStandby::onSleep()
 	timeAtSleep = mach_absolute_time();
 	if (cstateMask) { readCStates(csAtSleep); tscAtSleep = rdtsc(); e2AtSleep = rdmsr(kMsrPkgCstConfig); }
 
-	if (lastSleepType == kSleepTypeDeepIdle)
+	if (lastSleepType == kSleepTypeDeepIdle) {
 		d3Enter();
+		netEnter();
+	}
 
 	entered = false;
 	if (dsmEnabled && lastSleepType == kSleepTypeDeepIdle &&
@@ -809,6 +875,7 @@ void S0ixStandby::onWake()
 		dsmExit();
 		entered = false;
 	}
+	netExit();
 	counterAtWake = 0;
 	readCounter(counterAtWake);
 	timeAtWake = mach_absolute_time();
@@ -831,7 +898,7 @@ void S0ixStandby::publish()
 {
 	if (!pendingPublish) return;
 	pendingPublish = false;
-	if (d3Unbound) scanUnbound();
+	if (d3Unbound || d3Net) scanUnbound();
 
 	uint64_t ticks = 0, residencyUs = 0;
 	if (counter) {
