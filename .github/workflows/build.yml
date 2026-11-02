@@ -16,7 +16,7 @@ jobs:
     name: Privacy, scripts, ACPI
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Privacy scan (blocking)
         run: bash tools/privacy-scan.sh .
@@ -49,7 +49,7 @@ jobs:
       matrix:
         config: [Release, Debug]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0   # tags for the version string
 
@@ -70,12 +70,19 @@ jobs:
           if nm -u "$BIN" | grep -E '___cxa_atexit|___dso_handle|_atexit$'; then
             echo "::error::binary imports symbols the kernel does not export"; exit 1
           fi
-          # Resolve every import against the declared KPIs
-          kextlibs -undef-symbols -xml build/${{ matrix.config }}/S0ixStandby.kext || true
-          if kextlibs -undef-symbols build/${{ matrix.config }}/S0ixStandby.kext 2>&1 | grep -q "symbols not found"; then
-            kextlibs -undef-symbols build/${{ matrix.config }}/S0ixStandby.kext
-            echo "::error::unresolved symbols"; exit 1
+          # Resolve imports against the declared KPIs. Only meaningful when the
+          # runner has x86_64 KPI library kexts; the arm64 images have none
+          # ("No libraries found"), so then this is skipped, not failed.
+          KEXT=build/${{ matrix.config }}/S0ixStandby.kext
+          OUT=$(kextlibs -undef-symbols "$KEXT" 2>&1 || true)
+          if echo "$OUT" | grep -q "No libraries found"; then
+            echo "::notice::kextlibs has no x86_64 KPI libraries on this runner; symbol resolution skipped"
+          elif echo "$OUT" | grep -q "symbols not found"; then
+            echo "$OUT"; echo "::error::unresolved symbols"; exit 1
+          else
+            echo "$OUT"
           fi
+          echo "Imported symbols: $(nm -u "$BIN" | wc -l | tr -d ' ')"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -94,7 +101,7 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           path: src
       - name: Tag must match VERSION
