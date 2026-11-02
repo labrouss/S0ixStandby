@@ -96,6 +96,21 @@ X forwarding). See TESTING.md.
 | PMC page at the halt (`-s0ixpmcdump`) | Readable (SLP_S0 counter at `0xFE00193C` really is 0). Power-gating register `PWRM+0x1D90` (1 = gated): at the macOS halt every PCH IP matches Linux **except #17 ISH, still powered**. xHCI is gated (USB stick not a blocker). macOS has no ISH driver; on Linux `intel_ish_ipc` puts it in its low-power state |
 | WhateverXe | Acceleration panics on any wake (`context-ID-mismatch`); `-wex-noaccel` avoids it. Upstream: sleep unsupported |
 
+## 6. First usable result (2026-11-02)
+
+With `SSDT-DEEPIDLE`, S0ixStandby 0.1.10 (all `_DSM` functions, `-s0ixd3`),
+Ice Lake CPUID spoof and WhateverXe `-wex-noaccel`: **0.96 W over 21 min**
+(Linux s2idle 0.76 W), package PC10 99 %, EC in standby, wake on the power
+button and on RTC alarms. SLP_S0 still 0: **ISH** and **CNVI** stay powered.
+Neither powers down in D3hot (CNVi not even with the Wi-Fi/BT kexts
+disabled); both need their driver's firmware handshake (Linux:
+`intel_ish_ipc`, `iwlwifi`/`btusb`).
+
+Open risk: one ~1 h sleep hung at **DarkWakeExit** (`0x32`): a dark wake
+happened, then the switch to full wake on the power button never finished. The
+trigger is unknown; suspect the graphics path (WhateverXe), as with every
+other wake failure.
+
 ## Still to capture
 
 - A 30–60 min run of `s2idle-test.sh` for a tighter power number.

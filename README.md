@@ -11,11 +11,12 @@ by entering **Modern Standby (S0ix)** instead of S3.
 device (`PNP0D80`). CI runs on GitHub Actions only. First test machine: HP
 EliteBook 840 G8 (Tiger Lake), macOS Tahoe 26.7.1, OpenCore 1.0.8.
 
-**What works so far (2026-11-02):** with `SSDT-DEEPIDLE` alone, macOS Tahoe
-sleeps in **Deep Idle** (an S0 sleep built into XNU) and **wakes on the
-power button**: 2.0 W asleep vs 0.76 W for Linux s2idle on the same machine.
-The kext adds the LPS0 `_DSM` calls Apple never makes and measures S0ix
-residency. See [docs/RESEARCH-2A.md](docs/RESEARCH-2A.md).
+**What works so far (2026-11-02):** macOS Tahoe sleeps in **Deep Idle** (an
+S0 sleep built into XNU) at **0.96 W** (Linux s2idle on the same machine:
+0.76 W), package C10 99 %, EC in standby, and wakes on the power button and
+RTC alarms. Real S0ix is still blocked by two devices (ISH, CNVi) that need
+driver handshakes, and one long sleep hung on a dark wake → full wake
+transition. See [docs/FINDINGS.md](docs/FINDINGS.md) §5–6.
 
 ## How it works
 
