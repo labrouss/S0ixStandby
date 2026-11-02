@@ -19,6 +19,7 @@
 //  Boot-args:  -s0ixoff    do not load
 //              -s0ixnodsm  meter only, never call _DSM
 //              -s0ixdbg    verbose logging
+//              -s0ixd3     put driverless PCI endpoints in D3hot during Deep Idle
 //              -s0ixpmcdump snapshot the PMC register page (with the SLP_S0
 //                          counter) at boot and at each Deep Idle halt
 //              s0ixfn=N    bitmask of _DSM functions allowed to run, e.g.
@@ -193,6 +194,7 @@ bool S0ixStandby::start(IOService *provider)
 	}
 	gDebug = bootArg("-s0ixdbg");
 	pmcDump = bootArg("-s0ixpmcdump");
+	d3Unbound = bootArg("-s0ixd3");
 	dsmEnabled = !bootArg("-s0ixnodsm");
 	uint32_t fn = 0;
 	if (PE_parse_boot_argn("s0ixfn", &fn, sizeof(fn)))
@@ -247,7 +249,16 @@ bool S0ixStandby::start(IOService *provider)
 		publishTimer = IOTimerEventSource::timerEventSource(this, &S0ixStandby::publishTimerFired);
 		if (publishTimer && workLoop->addEventSource(publishTimer) != kIOReturnSuccess)
 			OSSafeReleaseNULL(publishTimer);
+		if (d3Unbound) {
+			d3Lock = IOLockAlloc();
+			scanTimer = IOTimerEventSource::timerEventSource(this, &S0ixStandby::scanTimerFired);
+			if (scanTimer && workLoop->addEventSource(scanTimer) != kIOReturnSuccess)
+				OSSafeReleaseNULL(scanTimer);
+			// Drivers keep loading after us: scan once boot has settled.
+			if (scanTimer) scanTimer->setTimeoutMS(60000);
+		}
 	}
+	setProperty("D3 unbound devices", d3Unbound);
 
 	setProperty("DSM enabled", dsmEnabled);
 	setProperty("DSM function filter", (unsigned long long)fnAllow, 32);
@@ -276,13 +287,21 @@ void S0ixStandby::stop(IOService *provider)
 		publishTimer->cancelTimeout();
 		if (workLoop) workLoop->removeEventSource(publishTimer);
 	}
+	if (scanTimer) {
+		scanTimer->cancelTimeout();
+		if (workLoop) workLoop->removeEventSource(scanTimer);
+	}
 	IOService::stop(provider);
 }
 
 void S0ixStandby::free()
 {
 	OSSafeReleaseNULL(publishTimer);
+	OSSafeReleaseNULL(scanTimer);
 	OSSafeReleaseNULL(workLoop);
+	for (uint32_t i = 0; i < d3Count; i++) OSSafeReleaseNULL(d3Dev[i]);
+	d3Count = 0;
+	if (d3Lock) { IOLockFree(d3Lock); d3Lock = nullptr; }
 	counter = nullptr;
 	counterPage = nullptr;
 	OSSafeReleaseNULL(counterMap);
@@ -505,6 +524,95 @@ bool S0ixStandby::readCounter(uint64_t &value)
 }
 
 // ---------------------------------------------------------------------------
+// Driverless PCI endpoints -> D3hot during Deep Idle (-s0ixd3)
+// ---------------------------------------------------------------------------
+
+void S0ixStandby::scanTimerFired(OSObject *owner, IOTimerEventSource *)
+{
+	if (S0ixStandby *self = OSDynamicCast(S0ixStandby, owner))
+		self->scanUnbound();
+}
+
+void S0ixStandby::scanUnbound()
+{
+	if (!d3Unbound || !d3Lock) return;
+	OSDictionary *match = serviceMatching("IOPCIDevice");
+	if (!match) return;
+	OSIterator *it = getMatchingServices(match);
+	match->release();
+	if (!it) return;
+
+	IOPCIDevice *found[kMaxD3] {};
+	UInt8 cap[kMaxD3] {};
+	uint32_t n = 0;
+	OSArray *names = OSArray::withCapacity(kMaxD3);
+
+	while (OSObject *o = it->getNextObject()) {
+		IOPCIDevice *dev = OSDynamicCast(IOPCIDevice, o);
+		if (!dev || dev->getClient())                 // has a driver (or a nub)
+			continue;
+		uint32_t cls = dev->configRead32(kIOPCIConfigClassCode) >> 8;   // class/subclass/prog-if
+		uint8_t base = (cls >> 16) & 0xFF;
+		if (base == 0x06 || base == 0x03)             // bridges, display: never
+			continue;
+		UInt8 pm = 0;
+		if (!dev->findPCICapability(kIOPCIPowerManagementCapability, &pm) || !pm)
+			continue;
+		if (n >= kMaxD3) break;
+		dev->retain();
+		found[n] = dev;
+		cap[n] = pm;
+		n++;
+		if (names) {
+			char buf[48];
+			uint32_t id = dev->configRead32(kIOPCIConfigVendorID);
+			snprintf(buf, sizeof(buf), "%02x:%02x.%x %04x:%04x class %06x",
+			         dev->getBusNumber(), dev->getDeviceNumber(), dev->getFunctionNumber(),
+			         id & 0xFFFF, id >> 16, cls);
+			if (OSString *str = OSString::withCString(buf)) { names->setObject(str); str->release(); }
+		}
+	}
+	it->release();
+
+	IOLockLock(d3Lock);
+	for (uint32_t i = 0; i < d3Count; i++) OSSafeReleaseNULL(d3Dev[i]);
+	for (uint32_t i = 0; i < n; i++) { d3Dev[i] = found[i]; d3Cap[i] = cap[i]; }
+	d3Count = n;
+	IOLockUnlock(d3Lock);
+
+	if (names) { setProperty("D3 devices", names); names->release(); }
+	LOG("%u driverless PCI endpoint(s) will be put in D3hot for Deep Idle", n);
+}
+
+// PMCSR is at capability + 4; bits 1:0 = power state (0 = D0, 3 = D3hot).
+void S0ixStandby::d3Enter()
+{
+	if (!d3Unbound || !d3Lock || d3Active) return;
+	IOLockLock(d3Lock);
+	for (uint32_t i = 0; i < d3Count; i++) {
+		UInt16 pmcsr = d3Dev[i]->configRead16(d3Cap[i] + 4);
+		if ((pmcsr & 3) == 0)
+			d3Dev[i]->configWrite16(d3Cap[i] + 4, (UInt16)((pmcsr & ~3) | 3));
+	}
+	d3Active = d3Count != 0;
+	IOLockUnlock(d3Lock);
+}
+
+void S0ixStandby::d3Exit()
+{
+	if (!d3Active || !d3Lock) return;
+	IOLockLock(d3Lock);
+	for (uint32_t i = 0; i < d3Count; i++) {
+		UInt16 pmcsr = d3Dev[i]->configRead16(d3Cap[i] + 4);
+		if ((pmcsr & 3) == 3)
+			d3Dev[i]->configWrite16(d3Cap[i] + 4, (UInt16)(pmcsr & ~3));
+	}
+	d3Active = false;
+	IOLockUnlock(d3Lock);
+	IODelay(10000);   // PCI PM: 10 ms D3hot -> D0 recovery
+}
+
+// ---------------------------------------------------------------------------
 // Sleep / wake
 // ---------------------------------------------------------------------------
 
@@ -556,6 +664,9 @@ void S0ixStandby::onSleep()
 	timeAtSleep = mach_absolute_time();
 	if (cstateMask) { readCStates(csAtSleep); tscAtSleep = rdtsc(); e2AtSleep = rdmsr(kMsrPkgCstConfig); }
 
+	if (lastSleepType == kSleepTypeDeepIdle)
+		d3Enter();
+
 	entered = false;
 	if (dsmEnabled && lastSleepType == kSleepTypeDeepIdle &&
 	    (dsmMask[kIntel] || dsmMask[kMicrosoft] || dsmMask[kAMD])) {
@@ -571,6 +682,7 @@ void S0ixStandby::onWake()
 		dsmExit();
 		entered = false;
 	}
+	d3Exit();
 	counterAtWake = 0;
 	readCounter(counterAtWake);
 	timeAtWake = mach_absolute_time();
@@ -593,6 +705,7 @@ void S0ixStandby::publish()
 {
 	if (!pendingPublish) return;
 	pendingPublish = false;
+	if (d3Unbound) scanUnbound();
 
 	uint64_t ticks = 0, residencyUs = 0;
 	if (counter) {

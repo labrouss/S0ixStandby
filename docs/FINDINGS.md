@@ -93,6 +93,7 @@ X forwarding). See TESTING.md.
 | LPS0 `_DSM` fn 5/6 | Safe: wakes normally |
 | LPS0 `_DSM` fn 3/4 | Puts the EC into its standby mode (power LED breathes); with the Coffee Lake spoof the wake never reached the CPU (`Failure during sleep 0x1F`) |
 | SLP_S0 residency | 0 so far, even at PC10 99 % (fn 3/4 not yet tested with the Ice Lake spoof) |
+| PMC page at the halt (`-s0ixpmcdump`) | Readable (SLP_S0 counter at `0xFE00193C` really is 0). Power-gating register `PWRM+0x1D90` (1 = gated): at the macOS halt every PCH IP matches Linux **except #17 ISH, still powered**. xHCI is gated (USB stick not a blocker). macOS has no ISH driver; on Linux `intel_ish_ipc` puts it in its low-power state |
 | WhateverXe | Acceleration panics on any wake (`context-ID-mismatch`); `-wex-noaccel` avoids it. Upstream: sleep unsupported |
 
 ## Still to capture

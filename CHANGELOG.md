@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.8 (unreleased)
+
+- `-s0ixd3`: PCI endpoints without a driver (e.g. an Intel Integrated Sensor
+  Hub, for which macOS has no driver) are put in D3hot for each Deep Idle and
+  back to D0 on wake. Bridges and display devices are never touched. List in
+  `D3 devices`; scanned 60 s after start and after each wake.
+- Depends on IOPCIFamily.
+
 ## 0.1.7 (unreleased)
 
 - `-s0ixpmcdump`: snapshot of the 4 KB PMC page holding the SLP_S0 counter

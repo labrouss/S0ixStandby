@@ -17,6 +17,7 @@
 #include <IOKit/IOTimerEventSource.h>
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/acpi/IOACPIPlatformDevice.h>
+#include <IOKit/pci/IOPCIDevice.h>
 
 class S0ixStandby : public IOService {
 	OSDeclareDefaultStructors(S0ixStandby)
@@ -73,6 +74,22 @@ private:
 	bool pmcDump {false};
 	uint32_t pmcAtBoot[1024] {}, pmcAtHalt[1024] {};
 	bool pmcHaltValid {false};
+
+	// -s0ixd3: PCI endpoints with no driver (e.g. an Intel Integrated Sensor
+	// Hub on macOS) stay in D0 and can keep the PCH out of S0ix. They are put
+	// in D3hot for Deep Idle and back to D0 on wake.
+	enum { kMaxD3 = 16 };
+	bool d3Unbound {false};
+	IOLock *d3Lock {nullptr};
+	IOPCIDevice *d3Dev[kMaxD3] {};
+	UInt8 d3Cap[kMaxD3] {};
+	uint32_t d3Count {0};
+	bool d3Active {false};
+	IOTimerEventSource *scanTimer {nullptr};
+	void scanUnbound();
+	void d3Enter();
+	void d3Exit();
+	static void scanTimerFired(OSObject *owner, IOTimerEventSource *sender);
 	void readCStates(uint64_t *out);
 
 	// Per-sleep bookkeeping, published after wake from a timer (not from the
