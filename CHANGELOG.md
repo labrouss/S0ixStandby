@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.12 (unreleased)
+
+- Platform data `Non-blocking IPs`: IPs proven not to block S0ix are left out
+  of the blocker report. Tiger Lake-LP: ISH (Linux s2idle 96 % with
+  `intel_ish_ipc` never loaded).
+- Removed `-s0ixd3net` (0.1.11): CNVi stayed powered and Wi-Fi did not
+  resume.
+
 ## 0.1.11 (unreleased)
 
 - `-s0ixd3net`: network-class PCI functions **with** a driver (e.g. CNVi Wi-Fi)

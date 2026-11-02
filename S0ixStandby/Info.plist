@@ -50,6 +50,12 @@
 					<integer>1108</integer>
 					<key>Gating bytes</key>
 					<integer>9</integer>
+					<!-- Powered at the halt but proven not to block S0ix on this platform
+					     (Linux s2idle 96 % with intel_ish_ipc never loaded). -->
+					<key>Non-blocking IPs</key>
+					<array>
+						<string>ISH</string>
+					</array>
 					<key>IP names</key>
 					<array>
 						<string>PMC</string>

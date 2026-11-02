@@ -14,8 +14,8 @@ EliteBook 840 G8 (Tiger Lake), macOS Tahoe 26.7.1, OpenCore 1.0.8.
 **What works so far (2026-11-02):** macOS Tahoe sleeps in **Deep Idle** (an
 S0 sleep built into XNU) at **0.96 W** (Linux s2idle on the same machine:
 0.76 W), package C10 99 %, EC in standby, and wakes on the power button and
-RTC alarms. Real S0ix is still blocked by two devices (ISH, CNVi) that need
-driver handshakes, and one long sleep hung on a dark wake → full wake
+RTC alarms. Real S0ix is still blocked, most likely by CNVi (Intel Wi-Fi/BT), whose
+macOS drivers don't power it down for sleep, and one long sleep hung on a dark wake → full wake
 transition. See [docs/FINDINGS.md](docs/FINDINGS.md) §5–6.
 
 ## How it works

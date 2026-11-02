@@ -121,6 +121,18 @@ D3hot** (`IOPCIEDeviceWrapper::setPowerState` only acks). Linux's PCI core
 does that after the driver's suspend. Test: S0ixStandby `-s0ixd3net`.
 Bluetooth (IntelBTUnified) not analysed yet.
 
+## 8. Ruling out blockers (2026-11-02)
+
+| Candidate | Test | Result |
+|---|---|---|
+| `XSQD` (PWRM+0x1B1C bit 22, set by ACPI `S023` votes of HDA/display/CNVi Wi-Fi/CNVi BT) | Linux reads the same `0x0140801e` (bit set) and reaches S0i3 | **Not a blocker** |
+| **ISH** (no macOS driver) | Linux s2idle with `intel_ish_ipc` never loaded: 96 % S0ix | **Not a blocker** (now ignored by the blocker report) |
+| **CNVi** (Wi-Fi + BT) | Powered at every macOS halt: with AirportItlwm/IntelBTUnified, with radios off, without the kexts, and with the Wi-Fi function in D3hot (`-s0ixd3net`, which also broke Wi-Fi resume) | **Only remaining candidate**; needs the drivers' suspend handling (Wi-Fi and/or BT) |
+
+`substate_requirements` is empty on this firmware (no per-IP requirement table).
+`CNVW._PS3` / `HDAS._PS3` only feed the `S023` vote (`XSQD`), so running
+them would not help.
+
 ## Still to capture
 
 - A 30–60 min run of `s2idle-test.sh` for a tighter power number.
