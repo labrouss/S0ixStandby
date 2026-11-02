@@ -26,6 +26,7 @@
 #include "S0ixStandby.hpp"
 
 #include <IOKit/IOLib.h>
+#include <IOKit/acpi/IOACPIPlatformExpert.h>
 #include <IOKit/pwr_mgt/RootDomain.h>
 #include <libkern/OSByteOrder.h>
 #include <kern/clock.h>
@@ -264,13 +265,38 @@ void S0ixStandby::dsmExit()
 // LPIT SLP_S0 residency meter
 // ---------------------------------------------------------------------------
 
+// IOACPIPlatformExpert::getACPITableData() is protected. A derived type may
+// form a pointer to it; calling through that pointer dispatches to the real
+// (AppleACPIPlatformExpert) implementation. Never instantiated.
+struct ACPITableAccess : public IOACPIPlatformExpert {
+	static const OSData *get(IOACPIPlatformExpert *pe, const char *name, UInt32 instance) {
+		auto fn = &ACPITableAccess::getACPITableData;
+		return (pe->*fn)(name, instance);
+	}
+};
+
 bool S0ixStandby::setupMeter()
 {
+	// Preferred: ask the ACPI platform expert for the table. Fallback: the
+	// "ACPI Tables" registry property some macOS versions publish.
+	const OSData *lpit = nullptr;
+	const char *source = "none";
 	IOService *pe = getPlatform();
-	OSDictionary *tables = pe ? OSDynamicCast(OSDictionary, pe->getProperty("ACPI Tables")) : nullptr;
-	OSData *lpit = tables ? OSDynamicCast(OSData, tables->getObject("LPIT")) : nullptr;
-	if (!lpit || lpit->getLength() < 36)
+	if (IOACPIPlatformExpert *acpi = OSDynamicCast(IOACPIPlatformExpert, pe)) {
+		lpit = ACPITableAccess::get(acpi, "LPIT", 0);
+		if (lpit) source = "getACPITableData";
+	}
+	if (!lpit && pe) {
+		if (OSDictionary *tables = OSDynamicCast(OSDictionary, pe->getProperty("ACPI Tables"))) {
+			lpit = OSDynamicCast(OSData, tables->getObject("LPIT"));
+			if (lpit) source = "ACPI Tables property";
+		}
+	}
+	setProperty("LPIT source", source);
+	if (!lpit || lpit->getLength() < 36) {
+		setProperty("LPIT status", lpit ? "too short" : "not found");
 		return false;
+	}
 
 	const uint8_t *t = static_cast<const uint8_t *>(lpit->getBytesNoCopy());
 	uint32_t tableLen = OSReadLittleInt32(t, 4);
@@ -310,8 +336,11 @@ bool S0ixStandby::setupMeter()
 		off += len;
 	}
 
-	if (!counter)
+	if (!counter) {
+		setProperty("LPIT status", "no usable SystemMemory residency counter");
 		return false;
+	}
+	setProperty("LPIT status", "ok");
 
 	setProperty("Residency counter address",
 	            (unsigned long long)counterMap->getPhysicalAddress(), 64);

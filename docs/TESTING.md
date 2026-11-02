@@ -137,3 +137,4 @@ Add one row per run.
 | 2026-11-02 | macOS 26.7.1 (25G241) | 01.19.00 | N1: SSDT-DEEPIDLE loaded | — | — | — | IOPMDeepIdleSupported = Yes |
 | 2026-11-02 | macOS 26.7.1 (25G241) | 01.19.00 | N1: first Deep Idle sleep | ~4.3 min | — | — | Deep Idle entered (LED solid), woke, **panic 1.2 s later in WhateverXe** (context-ID-mismatch) |
 | 2026-11-02 | macOS 26.7.1 (25G241) | 01.19.00 | N1b: Deep Idle, `-wex-noaccel` | 6.5 min | **2.01** | ? | **clean wake on power button**, type 7, 19 mAh |
+| 2026-11-02 | macOS 26.7.1 (25G241) | 01.19.00 | N2 step 1: kext 0.1.0 loads (`-s0ixnodsm`) | — | — | — | Intel `_DSM` mask 0x7F found; meter off (LPIT not found via registry property, fixed in 0.1.1) |
