@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.2 (unreleased)
+
+- Package C10 meter (Intel MSR 0x632 vs TSC, GenuineIntel family 6 with LPIT
+  only; `-s0ixnopc10` disables it): `Last PC10 percent`, `Last TSC ticks`.
+  `s0ix-status.sh` computes sleep length, PC10 % and S0ix % from them.
+- `Residency counter address` now shows the LPIT physical address (the
+  map's address was IOMMU-translated with VT-d on); new `Residency counter at
+  start` / `at wake` show the raw counter.
+- `sleep-power-test.sh`: survives SSH drops (ignores HUP), writes
+  `sleep-power-<date>.log`, warns on runs under 10 min, prints the kext's
+  residency.
+- `s0ix-status.sh`: kernel log through the unified log (IOLog does not reach
+  `dmesg` on Tahoe).
+
 ## 0.1.1 (unreleased)
 
 - Meter: read LPIT through `IOACPIPlatformExpert::getACPITableData()` (Tahoe

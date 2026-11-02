@@ -18,3 +18,4 @@ DerivedData/
 
 # Build dependencies (cloned by CI)
 MacKernelSDK/
+sleep-power-*.log

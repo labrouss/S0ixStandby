@@ -47,6 +47,11 @@ private:
 	volatile uint32_t *counter {nullptr};
 	uint8_t  counterBits {0};
 	uint64_t counterFreq {0};               // Hz; 0 = unknown
+	uint64_t counterAddr {0};               // physical address from LPIT
+
+	// Package C10 residency (Intel MSR 0x632, TSC rate) + TSC, per sleep.
+	bool pc10Available {false};
+	uint64_t pc10AtSleep {0}, pc10AtWake {0}, tscAtSleep {0}, tscAtWake {0};
 
 	// Per-sleep bookkeeping, published after wake from a timer (not from the
 	// platform-action context).

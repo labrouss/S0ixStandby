@@ -90,6 +90,44 @@ static bool guidToBytes(const char *s, uint8_t out[16])
 	return true;
 }
 
+// --- CPU helpers -----------------------------------------------------------
+
+static inline void cpuid(uint32_t leaf, uint32_t &a, uint32_t &b, uint32_t &c, uint32_t &d)
+{
+	asm volatile("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d) : "a"(leaf), "c"(0));
+}
+
+static inline uint64_t rdmsr(uint32_t msr)
+{
+	uint32_t lo, hi;
+	asm volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));
+	return ((uint64_t)hi << 32) | lo;
+}
+
+static inline uint64_t rdtsc()
+{
+	uint32_t lo, hi;
+	asm volatile("rdtsc" : "=a"(lo), "=d"(hi));
+	return ((uint64_t)hi << 32) | lo;
+}
+
+static const uint32_t kMsrPkgC10Residency = 0x632;   // Intel SDM: MSR_PKG_C10_RESIDENCY
+
+// PC10 residency MSR exists on Intel client CPUs from Haswell-ULT on. Only
+// read it on GenuineIntel family 6 with LPIT present (S0ix-class platform);
+// anything else would risk a #GP.
+static bool pc10Supported(bool lpitPresent)
+{
+	if (!lpitPresent) return false;
+	uint32_t a, b, c, d;
+	cpuid(0, a, b, c, d);
+	if (!(b == 0x756e6547 && d == 0x49656e69 && c == 0x6c65746e))   // "GenuineIntel"
+		return false;
+	cpuid(1, a, b, c, d);
+	uint32_t family = (a >> 8) & 0xF;
+	return family == 6;
+}
+
 static bool bootArg(const char *name)
 {
 	int dummy = 0;
@@ -122,8 +160,11 @@ bool S0ixStandby::start(IOService *provider)
 	if (!probeDsm() && dsmEnabled)
 		LOG("no supported LPS0 _DSM found on %s; meter only", lps0->getName());
 
-	if (!setupMeter())
+	bool meter = setupMeter();
+	if (!meter)
 		LOG("no usable LPIT SLP_S0 counter; residency will not be reported");
+	pc10Available = pc10Supported(meter) && !bootArg("-s0ixnopc10");
+	setProperty("PC10 meter", pc10Available);
 
 	workLoop = IOWorkLoop::workLoop();
 	if (workLoop) {
@@ -330,6 +371,7 @@ bool S0ixStandby::setupMeter()
 					counter = reinterpret_cast<volatile uint32_t *>(map->getVirtualAddress());
 					counterBits = bits;
 					counterFreq = freq;
+					counterAddr = addr;
 				}
 			}
 		}
@@ -342,13 +384,17 @@ bool S0ixStandby::setupMeter()
 	}
 	setProperty("LPIT status", "ok");
 
-	setProperty("Residency counter address",
-	            (unsigned long long)counterMap->getPhysicalAddress(), 64);
+	// The LPIT physical address (the map's getPhysicalAddress() would return
+	// an IOMMU-translated address when VT-d is active).
+	char hex[24];
+	snprintf(hex, sizeof(hex), "0x%llx", (unsigned long long)counterAddr);
+	setProperty("Residency counter address", hex);
 	setProperty("Residency counter frequency", (unsigned long long)counterFreq, 64);
 	uint64_t v = 0;
 	readCounter(v);
+	setProperty("Residency counter at start", (unsigned long long)v, 64);
 	LOG("LPIT residency counter at 0x%llx, %u-bit, %llu Hz, now %llu",
-	    (unsigned long long)counterMap->getPhysicalAddress(), counterBits, counterFreq, v);
+	    (unsigned long long)counterAddr, counterBits, counterFreq, v);
 	return true;
 }
 
@@ -389,6 +435,7 @@ void S0ixStandby::onSleep()
 	counterAtSleep = 0;
 	readCounter(counterAtSleep);
 	timeAtSleep = mach_absolute_time();
+	if (pc10Available) { pc10AtSleep = rdmsr(kMsrPkgC10Residency); tscAtSleep = rdtsc(); }
 
 	entered = false;
 	if (dsmEnabled && lastSleepType == kSleepTypeDeepIdle &&
@@ -408,6 +455,7 @@ void S0ixStandby::onWake()
 	counterAtWake = 0;
 	readCounter(counterAtWake);
 	timeAtWake = mach_absolute_time();
+	if (pc10Available) { pc10AtWake = rdmsr(kMsrPkgC10Residency); tscAtWake = rdtsc(); }
 	sleepCount++;
 	pendingPublish = true;
 
@@ -448,6 +496,18 @@ void S0ixStandby::publish()
 	setProperty("Last residency us", (unsigned long long)residencyUs, 64);
 	setProperty("Total residency us", (unsigned long long)totalResidencyUs, 64);
 	setProperty("Last action span ns", (unsigned long long)ns, 64);
+	setProperty("Residency counter at wake", (unsigned long long)counterAtWake, 64);
+
+	// PC10 share of the sleep: both counters run at TSC rate, and the TSC
+	// keeps counting through Deep Idle (unlike rebased mach_absolute_time).
+	if (pc10Available && tscAtWake > tscAtSleep) {
+		uint64_t pc10 = pc10AtWake - pc10AtSleep, tsc = tscAtWake - tscAtSleep;
+		setProperty("Last PC10 ticks", (unsigned long long)pc10, 64);
+		setProperty("Last TSC ticks", (unsigned long long)tsc, 64);
+		setProperty("Last PC10 percent", (unsigned long long)(pc10 * 100 / tsc), 32);
+		LOG("wake #%u: PC10 %llu%% of %llu TSC ticks", sleepCount,
+		    (unsigned long long)(pc10 * 100 / tsc), (unsigned long long)tsc);
+	}
 
 	LOG("wake #%u: sleep type %u, SLP_S0 residency %llu us (%llu ticks)",
 	    sleepCount, lastSleepType, residencyUs, ticks);
