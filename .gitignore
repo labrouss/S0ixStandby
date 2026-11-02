@@ -1,0 +1,17 @@
+# Collected data: personal or machine-identifying. Never commit.
+*.tar.gz
+s2idle-baseline-*/
+deepidle-check-*.txt
+*-s0ix-output.log
+tc.out
+*.panic
+*.shutdownStall
+*.ips
+config.plist
+EFI/
+*.dat
+# Build output
+build/
+DerivedData/
+*.kext.dSYM/
+.DS_Store
