@@ -3,7 +3,7 @@
 Each phase ends with a go/no-go decision. Phases 0–1 are read-only and cheap;
 they decide whether phase 2 is worth the effort.
 
-**Status 2026-11-03:** N0–N2 done (0.2.0). Next: CNVi (driver side), WhateverXe sleep (upstream), phase 3 blockers.
+**Status 2026-11-03:** N0–N2 done (0.2.0). Next: WhateverXe acceleration across sleep (upstream). CNVi parked (FINDINGS §7–8, ~0.2 W).
 
 **Order since 2026-11-02:** L → N0 → N1 → 0 (meter) → 1 → N2 → 3 → 4. Route B
 (2b) only if Deep Idle turns out to be unavailable on Tahoe.

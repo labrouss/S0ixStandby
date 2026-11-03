@@ -123,7 +123,17 @@ wakes; most likely only when the power button is pressed *during* a
 the same sequence as OpenBSD/Linux. **The PCI function itself is never put in
 D3hot** (`IOPCIEDeviceWrapper::setPowerState` only acks). Linux's PCI core
 does that after the driver's suspend. Test: S0ixStandby `-s0ixd3net`.
-Bluetooth (IntelBTUnified) not analysed yet.
+**Bluetooth** (lshbluesky/IntelBluetoothFirmware, 2026-10-18 HEAD): the kext
+is a firmware loader only. `start()` uploads the firmware and closes the
+device again, and `setPowerState()` only acks. Afterwards Apple's own
+Bluetooth stack drives the controller (IntelBTPatcher patches Apple's USB
+transport), so BT sleep is Apple's USB suspend; xHCI is gated at the halt.
+No BT sleep code to fix there.
+
+**CNVi status: parked.** It stays powered in every macOS combination tried
+(drivers on, radios off, no drivers, Wi-Fi function in D3hot). The likely
+missing piece is a firmware-level D3 handshake (Wi-Fi and/or BT), on the
+driver side, worth about 0.2 W (0.96 W vs Linux 0.76 W).
 
 ## 8. Ruling out blockers (2026-11-02)
 
