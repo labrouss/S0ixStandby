@@ -20,6 +20,9 @@ transition. See [docs/FINDINGS.md](docs/FINDINGS.md) §5–6.
 
 ## How it works
 
+**New here? Read [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md)**: one page with
+a sleep/wake sequence diagram.
+
 | Piece | Role |
 |---|---|
 | `acpi/SSDT-DEEPIDLE` | Defines `\_SB.LPS0` and `\_GPE.LXEN` (Darwin only). AppleACPIPlatform then publishes `IOPMDeepIdleSupported`, and macOS sleeps with type 7 (Deep Idle, XNU `acpi_idle_kernel()`) instead of ACPI S3 |
@@ -79,6 +82,7 @@ make DEBUG=1  # build/Debug/S0ixStandby.kext
 
 | File | Contents |
 |---|---|
+| [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md) | **Start here:** what the SSDT and the kext do, sleep/wake sequence, reports, boot-args |
 | [docs/FINDINGS.md](docs/FINDINGS.md) | Everything measured so far (S3 failure, hibernation attempt, Linux S0ix results) |
 | [docs/DESIGN.md](docs/DESIGN.md) | Architecture, hook point, the meter, open questions Q1–Q7 |
 | [docs/PLAN.md](docs/PLAN.md) | Phases with go/no-go criteria |
