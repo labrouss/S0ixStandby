@@ -7,14 +7,14 @@ by entering **Modern Standby (S0ix)** instead of S3.
 
 [![build](https://github.com/labrouss/S0ixStandby/actions/workflows/build.yml/badge.svg)](https://github.com/labrouss/S0ixStandby/actions/workflows/build.yml)
 
-**Status: experimental (0.1.0).** Generic: any laptop with an ACPI LPS0
+**Status: pre-release (0.2.0).** Generic: any laptop with an ACPI LPS0
 device (`PNP0D80`). CI runs on GitHub Actions only. First test machine: HP
 EliteBook 840 G8 (Tiger Lake), macOS Tahoe 26.7.1, OpenCore 1.0.8.
 
-**What works so far (2026-11-02):** macOS Tahoe sleeps in **Deep Idle** (an
-S0 sleep built into XNU) at **0.96 W** (Linux s2idle on the same machine:
-0.76 W), package C10 99 %, EC in standby, and wakes on the power button and
-RTC alarms. Real S0ix is still blocked, most likely by CNVi (Intel Wi-Fi/BT), whose
+**What works (0.2.0):** macOS Tahoe sleeps in **Deep Idle** (an S0 sleep
+built into XNU) at **~0.7–1.0 W** (Linux s2idle on the same machine: 0.76 W),
+package C10 99 %, EC in standby; wakes on the power button and RTC alarms; an
+11.5 h night with 26 maintenance dark wakes ran without a failure. Real S0ix is still blocked, most likely by CNVi (Intel Wi-Fi/BT), whose
 macOS drivers don't power it down for sleep, and one long sleep hung on a dark wake → full wake
 transition. See [docs/FINDINGS.md](docs/FINDINGS.md) §5–6.
 
@@ -24,6 +24,21 @@ transition. See [docs/FINDINGS.md](docs/FINDINGS.md) §5–6.
 |---|---|
 | `acpi/SSDT-DEEPIDLE` | Defines `\_SB.LPS0` and `\_GPE.LXEN` (Darwin only). AppleACPIPlatform then publishes `IOPMDeepIdleSupported`, and macOS sleeps with type 7 (Deep Idle, XNU `acpi_idle_kernel()`) instead of ACPI S3 |
 | `S0ixStandby.kext` | Plain IOKit (no Lilu). Matches `PNP0D80`, probes Intel / Microsoft / AMD LPS0 `_DSM` masks, calls display-off + entry before the CPUs halt (`IOPlatformSleepAction`) and exit + display-on after wake (`IOPlatformWakeAction`), Deep Idle sleeps only. Reads the SLP_S0 counter described by ACPI LPIT and publishes residency per sleep |
+
+### Known limitations (0.2.0)
+
+| | |
+|---|---|
+| Real S0ix (SLP_S0) | Not reached yet: CNVi (Intel Wi-Fi/BT) stays powered; fix belongs in the Wi-Fi/BT drivers |
+| Graphics | WhateverXe acceleration panics on any wake; boot with `-wex-noaccel` (no acceleration) |
+| Dark wake → full wake | One hang seen (`0x32`), not reproduced since; avoid pressing power during a dark wake |
+
+### Recommended configuration (tested)
+
+`SSDT-DEEPIDLE.aml`, Release kext, Ice Lake CPUID spoof on Tiger Lake,
+`hibernatemode 0`, `standby 0`, `powernap 0`, `tcpkeepalive 0`. Optional
+boot-args: `-s0ixd3` (driverless PCI devices to D3hot), `-s0ixdbg` while
+testing. Keep the `_S3` → soft-off patch as the fallback.
 
 ### Install (USB-stick EFI first)
 

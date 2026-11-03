@@ -129,6 +129,22 @@ private:
 	bool setupMeter();
 	bool readCounter(uint64_t &value);
 
+	// Everything publish() needs, copied at wake. A dark wake may go back to
+	// sleep within the same second, before the delayed publish runs; the next
+	// sleep then overwrites the live fields, but not this snapshot.
+	struct Snapshot {
+		uint32_t sleepCount, sleepType;
+		uint64_t counterAtSleep, counterAtWake, timeAtSleep, timeAtWake;
+		uint64_t csAtSleep[kCStateCount], csAtWake[kCStateCount], tscAtSleep, tscAtWake, e2AtSleep;
+		bool haltValid;
+		uint64_t haltAtQuiesce[kHaltCount], haltAtActive[kHaltCount], tscAtQuiesce, tscAtActive;
+		bool gatingValid;
+		uint32_t gatingAtHalt[8];
+		bool pmcHaltValid;
+	};
+	Snapshot snap {};
+	uint32_t pmcSnap[1024] {};
+
 	void onSleep();
 	void onWake();
 	void publish();

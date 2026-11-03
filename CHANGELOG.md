@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.0 (2026-11-03): first pre-release
+
+First usable release: real sleep (macOS Deep Idle) on a Tiger Lake laptop at
+**~0.7–1.0 W**, session kept, wake on power button and RTC, 26 maintenance
+dark wakes overnight without a failure (HP EliteBook 840 G8, macOS 26.7.1).
+
+- Fix: per-sleep figures are snapshotted at wake. A dark wake that goes back
+  to sleep within the same second no longer mixes two cycles in the published
+  properties; total residency accumulates every cycle.
+- Includes everything below (0.1.0–0.1.12).
+
+Known limitations: SLP_S0 (real S0ix) not reached yet, CNVi (Intel Wi-Fi/BT)
+stays powered (driver-side); WhateverXe graphics acceleration panics on wake
+(`-wex-noaccel` needed); see README.
+
 ## 0.1.12 (unreleased)
 
 - Platform data `Non-blocking IPs`: IPs proven not to block S0ix are left out

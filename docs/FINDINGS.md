@@ -106,10 +106,14 @@ Neither powers down in D3hot (CNVi not even with the Wi-Fi/BT kexts
 disabled); both need their driver's firmware handshake (Linux:
 `intel_ish_ipc`, `iwlwifi`/`btusb`).
 
-Open risk: one ~1 h sleep hung at **DarkWakeExit** (`0x32`): a dark wake
-happened, then the switch to full wake on the power button never finished. The
-trigger is unknown; suspect the graphics path (WhateverXe), as with every
-other wake failure.
+Overnight (2026-11-02/03, 11 h 27 min, 0.1.12): **26 RTC/Maintenance dark
+wakes, every one back to sleep**, clean power-button wake in the morning,
+battery 100 % → 80 % (≈ 0.7–1.0 W average, dark wakes included).
+
+Open risk: one earlier ~1 h sleep hung at **DarkWakeExit** (`0x32`): the
+switch from a dark wake to full wake never finished. Not reproduced in 26 dark
+wakes; most likely only when the power button is pressed *during* a
+(seconds-long) dark wake. Suspect the graphics path (WhateverXe).
 
 ## 7. AirportItlwm sleep path (laobamac/itlwm, 2026-11-01 HEAD)
 

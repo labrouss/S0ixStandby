@@ -641,9 +641,9 @@ void S0ixStandby::publishLiveBlockers()
 
 void S0ixStandby::publishBlockers()
 {
-	if (!gatingValid || !ipNames) return;
-	gatingValid = false;
-	const uint8_t *b = reinterpret_cast<const uint8_t *>(gatingAtHalt);
+	if (!snap.gatingValid || !ipNames) return;
+	snap.gatingValid = false;
+	const uint8_t *b = reinterpret_cast<const uint8_t *>(snap.gatingAtHalt);
 	char line[256];
 	size_t n = 0;
 	if (OSArray *blockers = blockerNames(b, line, sizeof(line))) {
@@ -827,6 +827,27 @@ void S0ixStandby::onWake()
 	timeAtWake = mach_absolute_time();
 	if (cstateMask) { readCStates(csAtWake); tscAtWake = rdtsc(); }
 	sleepCount++;
+
+	// Snapshot this cycle for publish() (plain copies, no registry access).
+	snap.sleepCount = sleepCount;
+	snap.sleepType = lastSleepType;
+	snap.counterAtSleep = counterAtSleep; snap.counterAtWake = counterAtWake;
+	snap.timeAtSleep = timeAtSleep; snap.timeAtWake = timeAtWake;
+	for (uint32_t i = 0; i < kCStateCount; i++) { snap.csAtSleep[i] = csAtSleep[i]; snap.csAtWake[i] = csAtWake[i]; }
+	snap.tscAtSleep = tscAtSleep; snap.tscAtWake = tscAtWake; snap.e2AtSleep = e2AtSleep;
+	snap.haltValid = haltValid;
+	for (uint32_t i = 0; i < kHaltCount; i++) { snap.haltAtQuiesce[i] = haltAtQuiesce[i]; snap.haltAtActive[i] = haltAtActive[i]; }
+	snap.tscAtQuiesce = tscAtQuiesce; snap.tscAtActive = tscAtActive;
+	snap.gatingValid = gatingValid;
+	for (uint32_t i = 0; i < 8; i++) snap.gatingAtHalt[i] = gatingAtHalt[i];
+	snap.pmcHaltValid = pmcHaltValid;
+	if (pmcHaltValid)
+		for (uint32_t i = 0; i < 1024; i++) pmcSnap[i] = pmcAtHalt[i];
+	haltValid = gatingValid = pmcHaltValid = false;   // consumed by this cycle
+	if (counter && counterFreq) {
+		uint64_t mask = counterBits == 64 ? ~0ULL : 0xFFFFFFFFULL;
+		totalResidencyUs += ((counterAtWake - counterAtSleep) & mask) * 1000000ULL / counterFreq;
+	}
 	pendingPublish = true;
 
 	// Do not touch the registry from the platform-action context.
@@ -849,40 +870,39 @@ void S0ixStandby::publish()
 	uint64_t ticks = 0, residencyUs = 0;
 	if (counter) {
 		uint64_t mask = counterBits == 64 ? ~0ULL : 0xFFFFFFFFULL;
-		ticks = (counterAtWake - counterAtSleep) & mask;   // handles one wrap
+		ticks = (snap.counterAtWake - snap.counterAtSleep) & mask;   // handles one wrap
 		if (counterFreq)
 			residencyUs = ticks * 1000000ULL / counterFreq;
-		totalResidencyUs += residencyUs;
 	}
 
 	// Note: XNU rebases mach_absolute_time over Deep Idle (deep_idle_rebase),
 	// so this is NOT the wall-clock sleep length; it is reported for reference.
 	uint64_t ns = 0;
-	absolutetime_to_nanoseconds(timeAtWake - timeAtSleep, &ns);
+	absolutetime_to_nanoseconds(snap.timeAtWake - snap.timeAtSleep, &ns);
 
-	setProperty("Sleep count", (unsigned long long)sleepCount, 32);
-	setProperty("Last sleep type", (unsigned long long)lastSleepType, 32);
-	setProperty("Last DSM entry/exit", lastSleepType == kSleepTypeDeepIdle && dsmEnabled);
+	setProperty("Sleep count", (unsigned long long)snap.sleepCount, 32);
+	setProperty("Last sleep type", (unsigned long long)snap.sleepType, 32);
+	setProperty("Last DSM entry/exit", snap.sleepType == kSleepTypeDeepIdle && dsmEnabled);
 	setProperty("Last residency ticks", (unsigned long long)ticks, 64);
 	setProperty("Last residency us", (unsigned long long)residencyUs, 64);
 	setProperty("Total residency us", (unsigned long long)totalResidencyUs, 64);
 	setProperty("Last action span ns", (unsigned long long)ns, 64);
-	setProperty("Residency counter at wake", (unsigned long long)counterAtWake, 64);
+	setProperty("Residency counter at wake", (unsigned long long)snap.counterAtWake, 64);
 
 	// C-state shares of the sleep: all counters run at TSC rate, and the TSC
 	// keeps counting through Deep Idle (unlike rebased mach_absolute_time).
-	if (cstateMask && tscAtWake > tscAtSleep) {
-		uint64_t tsc = tscAtWake - tscAtSleep;
+	if (cstateMask && snap.tscAtWake > snap.tscAtSleep) {
+		uint64_t tsc = snap.tscAtWake - snap.tscAtSleep;
 		setProperty("Last TSC ticks", (unsigned long long)tsc, 64);
 		char e2[48];
-		snprintf(e2, sizeof(e2), "0x%llx (limit %s)", (unsigned long long)e2AtSleep,
-		         pkgLimitName((uint32_t)(e2AtSleep & 0xF)));
+		snprintf(e2, sizeof(e2), "0x%llx (limit %s)", (unsigned long long)snap.e2AtSleep,
+		         pkgLimitName((uint32_t)(snap.e2AtSleep & 0xF)));
 		setProperty("Last 0xE2 at sleep", e2);
 		if (OSDictionary *d = OSDictionary::withCapacity(kCStateCount)) {
 			char line[160]; size_t n = 0; line[0] = 0;
 			for (uint32_t i = 0; i < kCStateCount; i++) {
 				if (!(cstateMask & (1U << i))) continue;
-				uint64_t pct = (csAtWake[i] - csAtSleep[i]) * 100 / tsc;
+				uint64_t pct = (snap.csAtWake[i] - snap.csAtSleep[i]) * 100 / tsc;
 				if (OSNumber *num = OSNumber::withNumber((unsigned long long)pct, 32)) {
 					d->setObject(kCStates[i].name, num);
 					num->release();
@@ -892,12 +912,12 @@ void S0ixStandby::publish()
 			}
 			setProperty("Last C-state percent", d);
 			d->release();
-			LOG("wake #%u: C-states over %llu TSC ticks:%s", sleepCount, (unsigned long long)tsc, line);
+			LOG("wake #%u: C-states over %llu TSC ticks:%s", snap.sleepCount, (unsigned long long)tsc, line);
 		}
 	}
 
-	if (haltValid && tscAtActive > tscAtQuiesce) {
-		uint64_t tsc = tscAtActive - tscAtQuiesce;
+	if (snap.haltValid && snap.tscAtActive > snap.tscAtQuiesce) {
+		uint64_t tsc = snap.tscAtActive - snap.tscAtQuiesce;
 		setProperty("Last halt TSC ticks", (unsigned long long)tsc, 64);
 		if (OSDictionary *d = OSDictionary::withCapacity(kHaltCount)) {
 			const char *names[kHaltCount];
@@ -905,7 +925,7 @@ void S0ixStandby::publish()
 			for (uint32_t i = 0; i < kCStateCount; i++) names[2 + i] = kCStates[i].name;
 			for (uint32_t i = 0; i < kHaltCount; i++) {
 				if (i >= 2 && !(cstateMask & (1U << (i - 2)))) continue;
-				uint64_t pct = (haltAtActive[i] - haltAtQuiesce[i]) * 100 / tsc;
+				uint64_t pct = (snap.haltAtActive[i] - snap.haltAtQuiesce[i]) * 100 / tsc;
 				if (OSNumber *num = OSNumber::withNumber((unsigned long long)pct, 32)) {
 					d->setObject(names[i], num);
 					num->release();
@@ -915,18 +935,16 @@ void S0ixStandby::publish()
 			d->release();
 		}
 	}
-	haltValid = false;
-
 	publishBlockers();
 
-	if (pmcHaltValid) {
-		if (OSData *d = OSData::withBytes(pmcAtHalt, sizeof(pmcAtHalt))) {
+	if (snap.pmcHaltValid) {
+		if (OSData *d = OSData::withBytes(pmcSnap, sizeof(pmcSnap))) {
 			setProperty("PMC page at halt", d);
 			d->release();
 		}
-		pmcHaltValid = false;
+		snap.pmcHaltValid = false;
 	}
 
 	LOG("wake #%u: sleep type %u, SLP_S0 residency %llu us (%llu ticks)",
-	    sleepCount, lastSleepType, residencyUs, ticks);
+	    snap.sleepCount, snap.sleepType, residencyUs, ticks);
 }

@@ -161,3 +161,4 @@ Add one row per run.
 | 2026-11-02 | macOS 26.7.1 (25G241) | 01.19.00 | 0.1.11 `-s0ixd3net` (Wi-Fi function D3hot during sleep) | 2.6 min (TSC) | — | 0 | CNVI still on at the halt; **Wi-Fi did not come back after wake** → option dropped |
 | 2026-11-02 | Ubuntu 26.04.1 (7.0.0-30) | 01.19.00 | PMC `0xFE001B1C` read via /dev/mem | — | — | — | `0x0140801e`, **XSQD = 1 as on macOS** → not the blocker |
 | 2026-11-02 | Ubuntu 26.04.1 (7.0.0-30) | 01.19.00 | s2idle-test.sh, `module_blacklist=intel_ish_ipc` | 3.2 min | 1.48 (short) | **96** | **ISH is not a blocker** |
+| 2026-11-02/03 | macOS 26.7.1 (25G241) | 01.19.00 | **Overnight**, 0.1.12, all fn, `-s0ixd3`, radios on, Ice Lake | **11 h 27 min** | **~0.7–1.0** (100 % → 80 %) | 0 | **26 RTC/Maintenance dark wakes, all back to sleep**; clean power-button wake in the morning; 46.5 min / 64 mAh first segment = 1.01 W |
