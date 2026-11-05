@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.1 (unreleased)
+
+- GPU probe: at the wake action the iGPU is in D0 but its PCI memory decode
+  is still off (`cmd 0x400`; seen on the EliteBook). If BAR0 still matches the
+  sleep action, decode is enabled just for the probe/reset and the original
+  command register restored; a changed BAR0 is reported as `lost power (PCI
+  config space reset)`. Reports now include `cmd`, `pmcsr` and BAR0.
+- `s0ix-status.sh`: fixed `grep: empty (sub)expression` in the GPU section.
+
 ## 0.3.0 (unreleased): GPU state across Deep Idle
 
 - `-s0ixgpuprobe` (Intel Gen11/Gen12 iGPU: Ice Lake, Tiger Lake, Rocket

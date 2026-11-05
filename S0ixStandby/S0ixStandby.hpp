@@ -38,7 +38,9 @@ public:
 	struct GpuState {
 		bool valid, canary;
 		uint8_t why;                         // why not valid
+		bool decodeEnabled;                  // memory decode was off; enabled for the access
 		uint16_t cmd, pmcsr;
+		uint32_t bar0, bar1;                 // PCI BAR0 (GTTMMADR) low/high
 		uint32_t reg[kGpuRegCount];
 	};
 
@@ -166,7 +168,7 @@ private:
 	uint32_t gpuTries {0};
 	IOTimerEventSource *gpuTimer {nullptr};
 	GpuState gpuAtSleep {}, gpuAtWake {};
-	uint32_t gpuVerdict {0};                 // 0 unknown, 1 retained, 2 lost power
+	uint32_t gpuVerdict {0};                 // 0 unknown, 1 retained, 2 lost power, 3 PCI config reset
 	uint32_t gpuResetResult {0}, gpuResetUs {0}, gpuEnginesReady {0};
 	uint32_t gpuResetCount {0}, gpuRetainedCount {0};
 	bool setupGPU();
@@ -175,10 +177,12 @@ private:
 	void gpuWrite(uint32_t off, uint32_t v);
 	bool gpuPoll(uint32_t off, uint32_t mask, uint32_t want, uint32_t timeoutUs);
 	bool gpuForcewake(bool on, bool *took);
-	bool gpuAccessible(GpuState &s);
-	void gpuCapture(GpuState &s, bool writeCanary);
+	bool gpuAccessible(GpuState &s, const GpuState *ref);
+	void gpuRestoreDecode(const GpuState &s);
+	void gpuCapture(GpuState &s, bool writeCanary, const GpuState *ref);
 	void gpuSleep();
 	void gpuWake();
+	void gpuResetNow();
 	void gpuFormat(const GpuState &s, char *out, size_t size);
 	void publishGPU();
 

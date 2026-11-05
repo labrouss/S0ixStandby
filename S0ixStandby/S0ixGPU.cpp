@@ -74,7 +74,7 @@ static const uint8_t kGpuModels[] = {
 };
 
 static const char *const kVerdictName[] = {
-	"unknown", "retained", "lost power",
+	"unknown", "retained", "lost power", "lost power (PCI config space reset)",
 };
 static const char *const kResetName[] = {
 	"not attempted", "done", "skipped: GPU state was lost (nothing to do)",
@@ -130,12 +130,32 @@ bool S0ixStandby::gpuForcewake(bool on, bool *took)
 	return true;
 }
 
-// The GPU is only accessed while its PCI function is in D0 with memory decode on.
-bool S0ixStandby::gpuAccessible(GpuState &s)
+// The GPU is only accessed in D0. At the wake action macOS's PCI layer may not
+// have re-enabled memory decode yet: if BAR0 still holds its value from the
+// sleep action (config space intact, no reset), decode is enabled for the
+// access and the original command register is restored afterwards. A changed
+// BAR0 means the function was reset: never touched.
+bool S0ixStandby::gpuAccessible(GpuState &s, const GpuState *ref)
 {
 	s.cmd = gpuDev->configRead16(kIOPCIConfigCommand);
 	s.pmcsr = gpuPmCap ? gpuDev->configRead16(gpuPmCap + kPmcsrOff) : 0;
-	return (s.cmd & kIOPCICommandMemorySpace) && (s.pmcsr & 3) == 0;
+	s.bar0 = gpuDev->configRead32(kIOPCIConfigBaseAddress0);
+	s.bar1 = gpuDev->configRead32(kIOPCIConfigBaseAddress1);
+	if ((s.pmcsr & 3) != 0) { s.why = 1; return false; }
+	if (s.cmd & kIOPCICommandMemorySpace) return true;
+	if (!ref || !ref->valid || (s.bar0 & ~0xFu) == 0 || s.bar0 != ref->bar0 || s.bar1 != ref->bar1) {
+		s.why = 3;
+		return false;
+	}
+	gpuDev->configWrite16(kIOPCIConfigCommand, (UInt16)(s.cmd | kIOPCICommandMemorySpace));
+	s.decodeEnabled = true;
+	return true;
+}
+
+void S0ixStandby::gpuRestoreDecode(const GpuState &s)
+{
+	if (s.decodeEnabled)
+		gpuDev->configWrite16(kIOPCIConfigCommand, s.cmd);
 }
 
 // --- Setup --------------------------------------------------------------------
@@ -203,13 +223,18 @@ bool S0ixStandby::setupGPU()
 
 // --- Sleep / wake -------------------------------------------------------------
 
-void S0ixStandby::gpuCapture(GpuState &s, bool writeCanary)
+void S0ixStandby::gpuCapture(GpuState &s, bool writeCanary, const GpuState *ref)
 {
 	s = GpuState {};
 	if (!gpuMMIO) return;
-	if (!gpuAccessible(s)) { s.why = 1; return; }
+	if (!gpuAccessible(s, ref)) return;
 	bool took[2] {};
-	if (!gpuForcewake(true, took)) { gpuForcewake(false, took); s.why = 2; return; }
+	if (!gpuForcewake(true, took)) {
+		gpuForcewake(false, took);
+		gpuRestoreDecode(s);
+		s.why = 2;
+		return;
+	}
 	for (uint32_t i = 0; i < kGpuRegCount; i++)
 		s.reg[i] = gpuRead(kGpuRegs[i].off);
 	// No accelerator programs the engines (no status page, execlists off):
@@ -221,23 +246,27 @@ void S0ixStandby::gpuCapture(GpuState &s, bool writeCanary)
 	}
 	gpuForcewake(false, took);
 	s.valid = true;
+	// The wake action restores decode after the optional reset (gpuWake).
+	if (!ref) gpuRestoreDecode(s);
 }
 
 // Sleep action: all drivers are asleep (Apple's accelerator stopped the engines).
 void S0ixStandby::gpuSleep()
 {
-	gpuCapture(gpuAtSleep, true);
+	gpuCapture(gpuAtSleep, true, nullptr);
 }
 
 // Wake action: before any driver wakes.
 void S0ixStandby::gpuWake()
 {
-	gpuCapture(gpuAtWake, false);
+	gpuCapture(gpuAtWake, false, &gpuAtSleep);
 	gpuVerdict = 0;
 	gpuResetResult = 0;
 	gpuResetUs = 0;
 	gpuEnginesReady = 0;
 
+	if (gpuAtSleep.valid && !gpuAtWake.valid && gpuAtWake.why == 3)
+		gpuVerdict = 3;                       // PCI config space was reset
 	if (gpuAtSleep.valid && gpuAtWake.valid) {
 		if (gpuAtSleep.canary)
 			gpuVerdict = gpuAtWake.reg[kRegGpr0] == kCanary ? 1 : 2;
@@ -247,9 +276,14 @@ void S0ixStandby::gpuWake()
 	}
 	if (gpuVerdict == 1) gpuRetainedCount++;
 
-	if (!gpuReset) return;
+	if (gpuReset) gpuResetNow();
+	gpuRestoreDecode(gpuAtWake);
+}
+
+void S0ixStandby::gpuResetNow()
+{
 	if (!gpuAtWake.valid) { gpuResetResult = 6; return; }
-	if (gpuVerdict == 2) { gpuResetResult = 2; return; }
+	if (gpuVerdict == 2 || gpuVerdict == 3) { gpuResetResult = 2; return; }
 	if (gpuVerdict == 0) { gpuResetResult = 3; return; }
 
 	uint64_t t0 = mach_absolute_time();
@@ -278,12 +312,15 @@ void S0ixStandby::gpuWake()
 
 void S0ixStandby::gpuFormat(const GpuState &s, char *out, size_t size)
 {
-	static const char *const why[] = { "", "not accessible (D3 or memory decode off)", "forcewake timeout" };
+	static const char *const why[] = { "", "not in D0", "forcewake timeout",
+	                                   "memory decode off and BAR0 changed (reset)" };
 	if (!s.valid) {
-		snprintf(out, size, "%s (cmd 0x%x pmcsr 0x%x)", s.why < 3 ? why[s.why] : "?", s.cmd, s.pmcsr);
+		snprintf(out, size, "%s (cmd 0x%x pmcsr 0x%x bar0 %x:%x)", s.why < 4 ? why[s.why] : "?",
+		         s.cmd, s.pmcsr, s.bar1, s.bar0);
 		return;
 	}
-	size_t n = snprintf(out, size, "D%u", s.pmcsr & 3);
+	size_t n = snprintf(out, size, "D%u cmd=%x pmcsr=%x bar0=%x:%x%s", s.pmcsr & 3, s.cmd, s.pmcsr,
+	                    s.bar1, s.bar0, s.decodeEnabled ? " (decode was off, enabled for the read)" : "");
 	for (uint32_t i = 0; i < kGpuRegCount && n < size; i++)
 		n += snprintf(out + n, size - n, " %s=%x", kGpuRegs[i].name, s.reg[i]);
 	if (s.canary && n < size) snprintf(out + n, size - n, " (canary written)");
@@ -299,8 +336,8 @@ void S0ixStandby::publishGPU()
 	setProperty("GPU registers at wake", buf);
 
 	const char *how = snap.gpuAtSleep.canary ? " (canary)" : " (status page / execlist mode)";
-	snprintf(buf, sizeof(buf), "%s%s", kVerdictName[snap.gpuVerdict < 3 ? snap.gpuVerdict : 0],
-	         snap.gpuVerdict ? how : "");
+	snprintf(buf, sizeof(buf), "%s%s", kVerdictName[snap.gpuVerdict < 4 ? snap.gpuVerdict : 0],
+	         (snap.gpuVerdict == 1 || snap.gpuVerdict == 2) ? how : "");
 	setProperty("GPU state after sleep", buf);
 	setProperty("GPU retained count", (unsigned long long)gpuRetainedCount, 32);
 
@@ -313,6 +350,6 @@ void S0ixStandby::publishGPU()
 		setProperty("GPU reset", buf);
 		setProperty("GPU reset count", (unsigned long long)gpuResetCount, 32);
 	}
-	LOG("wake #%u: GPU %s%s%s", snap.sleepCount, kVerdictName[snap.gpuVerdict < 3 ? snap.gpuVerdict : 0],
+	LOG("wake #%u: GPU %s%s%s", snap.sleepCount, kVerdictName[snap.gpuVerdict < 4 ? snap.gpuVerdict : 0],
 	    gpuReset ? ", reset " : "", gpuReset ? kResetName[snap.gpuResetResult < 7 ? snap.gpuResetResult : 0] : "");
 }

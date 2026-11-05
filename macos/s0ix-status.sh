@@ -30,7 +30,7 @@ echo "$P" | grep '"Last SLP_S0 blockers at halt"' | sed 's/.*= (//; s/)$//; s/"/
 echo
 echo "== GPU (-s0ixgpuprobe / -s0ixgpureset)"
 if echo "$P" | grep -q '"GPU registers at wake"'; then
-  echo "$P" | grep -E '"GPU( state after sleep| reset| reset count| retained count|)"' | sed 's/^ *//; s/"//g; s/^/  /'
+  echo "$P" | grep -E '"GPU"|"GPU (state after sleep|reset|reset count|retained count)"' | sed 's/^ *//; s/"//g; s/^/  /'
   echo "$P" | grep -E '"GPU registers at (sleep|wake)"' | sed 's/^ *//; s/"//g; s/^/  /'
 else
   echo "$P" | grep -E '"GPU"' | sed 's/^ *//; s/"//g; s/^/  /' || echo "  (off)"
