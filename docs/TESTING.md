@@ -127,6 +127,31 @@ the `_DSM` calls (0 = never, which would explain the 2 W).
 - If it does not wake or panics: boot with `-s0ixoff`, collect the panic file
   and `log show --last 30m --predicate 'eventMessage CONTAINS "S0ixStandby"'`.
 
+## Wake failure protocol
+
+For every sleep test, especially long ones (30 min+), note the answers below.
+After the wake, or after the forced restart that followed a failed wake, run
+`sudo bash macos/wake-report.sh` (it finds the last sleep in the pmset log;
+or pass the sleep time) and keep the `wake-report-*.txt` with the notes.
+Never commit it.
+
+Before sleep:
+- Boot entry / boot-args (`-wex-noaccel`? `-s0ixgpuprobe`?), kext versions
+- AC or battery, lid open/closed, Wi-Fi on/off, Bluetooth devices connected,
+  USB devices plugged in
+- How it goes to sleep: Apple menu, power button, lid, idle (`pmset -g`
+  `sleep` minutes), and the time
+
+While asleep: power LED (breathing / solid / off).
+
+On wake, before touching anything else:
+1. What woke it (power button, key, lid) and the time
+2. Screen: backlight on? picture? lock screen? frozen or responsive?
+3. If nothing appears: press Caps Lock (LED toggles = system alive), try
+   `ping`/`ssh` from another device, **wait 3 minutes** before forcing off
+4. Keyboard backlight, fan, LED state
+5. If forced off: time of the forced restart
+
 ## Results log
 
 Add one row per run.
@@ -167,3 +192,5 @@ Add one row per run.
 | 2026-11-05 | macOS 26.7.1 (25G241) | 01.19.00 | 0.3.1 `-s0ixgpuprobe`, `-wex-noaccel` | 3.3 min (TSC) | — | 0 | **GPU engine state lost** (canary in GPR0 gone); PCI config kept (BAR0 same, D0), only `cmd` 407 → 400. Without acceleration the GPU wakes blank; with acceleration still to measure (0.3.2 NVRAM record) |
 | 2026-11-05 | macOS 26.7.1 (25G241) | 01.19.00 | 0.3.2, WhateverXe acceleration on, `-s0ixgpuprobe` | short | — | — | panic again `ElementSwitch-second-item-null` (from the GPU hard interrupt); no NVRAM record: 0.3.2's commit key was stored as a junk variable instead of committing |
 | 2026-11-05 | macOS 26.7.1 (25G241) | 01.19.00 | 0.3.2 `-s0ixgpuprobe`, `-wex-noaccel` | 0.9 min | 3.15 (short) | 0 | `s0ix-gpu-last`: lost power (canary gone), as with 0.3.1; NVRAM write works |
+| 2026-11-05 | macOS 26.7.1 (25G241) | 01.19.00 | 0.3.2/0.3.3 `-s0ixgpuprobe`, `-wex-noaccel`, **idle sleep on battery** | 29 min | — | 0 | power-button wake completed (full wake, lock screen drawing, Wi-Fi reconnected, GPU record saved), then **unusable, no panic**; log ends 14 s after wake (may be the last saved batch); forced restart after 2.5 min. Cause open |
+| 2026-11-05 | macOS 26.7.1 (25G241) | 01.19.00 | **same setup as the 14:28 freeze**: 0.3.3 `-s0ixgpuprobe`, `-wex-noaccel`, idle sleep on battery | 27 min (+ dark wake XDCI 3 s after sleep, 45 s) | — | 0 | **clean power-button wake**; GPU lost power (canary); NVRAM record not committed (`commit refused`) → 0.3.4. The freeze is intermittent |

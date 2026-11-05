@@ -1,6 +1,18 @@
 # Changelog
 
+## 0.3.4 (unreleased)
+
+- NVRAM record: macOS 26 ignores the sync-now property key as well (0.3.3
+  reported `stored, commit refused`); the record is now committed with
+  `IODTNVRAM::sync()`, as Lilu does.
+- `wake-report.sh`: finds the sleep start in pmset logs that use tabs,
+  skips maintenance re-sleeps, lists only lines from the window.
+
 ## 0.3.3 (unreleased)
+
+- `macos/wake-report.sh`: one redacted report per sleep/wake (pmset log,
+  panics, NVRAM records, S0ixStandby/GPU state, the log around the wake),
+  also after a forced restart. TESTING.md: wake failure protocol.
 
 - Fix: the NVRAM commit used the private `IONVRAM-FORCESYNCNOW-PROPERTY`
   key, which macOS 26 stores as a plain variable (nothing committed, junk

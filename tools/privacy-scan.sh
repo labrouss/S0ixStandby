@@ -27,7 +27,7 @@ done
 for f in $FILES; do
   f=${f#./}
   case "$f" in
-    *config.plist|*.tar.gz|*.panic|*deepidle-check-*|*s2idle-baseline-*|*s0ix-output.log|*.shutdownStall|*msdm*|*MSDM*)
+    *config.plist|*.tar.gz|*.panic|*wake-report-*|*sleep-power-*.log|*deepidle-check-*|*s2idle-baseline-*|*s0ix-output.log|*.shutdownStall|*msdm*|*MSDM*)
       echo "::error file=$f::data file must not be committed"; FAIL=1;;
   esac
 done

@@ -32,6 +32,7 @@
 #include <IOKit/IOLib.h>
 #include <IOKit/IODeviceTreeSupport.h>
 #include <IOKit/IOKitKeys.h>
+#include <IOKit/IONVRAM.h>
 #include <pexpert/pexpert.h>
 
 #define LOG(fmt, ...)  IOLog("S0ixStandby: " fmt "\n", ##__VA_ARGS__)
@@ -347,21 +348,18 @@ void S0ixStandby::recordGPU()
 	if (OSData *d = OSData::withBytes(line, (unsigned)strlen(line))) {
 		stored = opts->setProperty(kNvramVar, d);
 		d->release();
-		// Commit now: the next thing to happen may be a panic. Public key
-		// (IOKitKeys.h); IODTNVRAM handles it and stores nothing.
+		// Commit now: the next thing to happen may be a panic. macOS 26
+		// stores the sync-now property keys as plain variables, so call
+		// IODTNVRAM::sync() directly (as Lilu's NVStorage does).
 		if (stored)
-			if (OSString *s = OSString::withCString(kNvramVar)) {
-				synced = opts->setProperty(kIONVRAMSyncNowPropertyKey, s);
-				s->release();
-				// A kernel that does not know the key stores it as a variable.
-				if (opts->getProperty(kIONVRAMSyncNowPropertyKey)) {
-					opts->removeProperty(kIONVRAMSyncNowPropertyKey);
-					synced = false;
+			if (IODTNVRAM *nv = OSDynamicCast(IODTNVRAM, opts))
+				if (nv->safeToSync()) {
+					nv->sync();
+					synced = true;
 				}
-			}
 	}
 	opts->release();
-	setProperty("GPU NVRAM record", stored ? (synced ? "stored and committed" : "stored, commit refused")
+	setProperty("GPU NVRAM record", stored ? (synced ? "stored and committed" : "stored, not committed (not safe to sync)")
 	                                       : "refused");
 }
 
