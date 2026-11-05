@@ -30,7 +30,7 @@ during Modern Standby.
 | Part | Job |
 |---|---|
 | **`acpi/SSDT-DEEPIDLE.aml`** | Defines `\_SB.LPS0` and `\_GPE.LXEN` (macOS only). AppleACPIPlatform then publishes `IOPMDeepIdleSupported` and macOS sleeps with **Deep Idle** (sleep type 7) instead of S3. *This is what makes the laptop sleep.* |
-| **`S0ixStandby.kext`** | Makes Deep Idle behave like Modern Standby on PC firmware: sends the firmware's standby notifications (LPS0 `_DSM`), measures each sleep, and reports what keeps the platform out of S0ix. Plain IOKit, no Lilu, no patching. |
+| **`S0ixStandby.kext`** | Makes Deep Idle behave like Modern Standby on PC firmware: sends the firmware's standby notifications (LPS0 `_DSM`), resets an Intel iGPU at wake when it kept its state (so graphics acceleration survives sleep), measures each sleep, and reports what keeps the platform out of S0ix. Plain IOKit, no Lilu, no patching. |
 
 ## What happens during sleep
 
@@ -46,6 +46,7 @@ sequenceDiagram
     U->>D: Sleep (menu, lid, idle)
     D->>D: every driver goes to its sleep state
     Note over K: IOPlatformSleepAction<br/>(all drivers asleep, interrupts on)
+    K->>K: note the iGPU engine state
     K->>F: LPS0 _DSM "display off" (fn 3)
     K->>F: LPS0 _DSM "standby entry" (fn 5)
     F->>F: EC enters standby (power LED breathes)
@@ -60,7 +61,8 @@ sequenceDiagram
     K->>F: LPS0 _DSM "standby exit" (fn 6)
     K->>F: LPS0 _DSM "display on" (fn 4)
     F->>F: EC leaves standby (LED solid)
-    D->>D: drivers wake, session continues
+    K->>C: iGPU kept its state? → reset its engines
+    D->>D: drivers wake (graphics restarts a blank GPU), session continues
     K->>K: publish this sleep's figures (IORegistry)
 ```
 
@@ -83,6 +85,19 @@ made only for Deep Idle sleeps, never for S3.
    `S0ixPlatforms`, keyed by CPU model; Tiger Lake-LP included).
 6. With `-s0ixd3`: after 60 s, puts **PCI devices without any macOS driver**
    in D3hot.
+7. **Finds the Intel iGPU** (Gen11/Gen12: Ice Lake to Raptor Lake) and maps
+   its registers for the wake-time check.
+
+## Why the GPU reset
+
+With graphics acceleration (e.g. WhateverXe) the iGPU keeps its engine state
+through Deep Idle. Apple's graphics driver was written for S3, where the GPU
+loses power, so on wake it restarts the engines as if they were blank, on top
+of the leftover state, and the driver's bookkeeping breaks (WhateverXe
+panicked a few seconds after every wake). At the wake action, before any
+driver wakes, the kext checks the GPU and, if it kept its state, resets its
+engines (as Linux does on every resume). The display is not touched. Without
+an accelerator the GPU is left alone. Details: [FINDINGS.md](FINDINGS.md) §9.
 
 Nothing is hardcoded per laptop: everything comes from ACPI tables, the CPU
 and the platform data.
@@ -100,6 +115,7 @@ the `S0ixStandby` service.
 | Likely SLP_S0 blockers | Chipset devices still powered when the CPU halted |
 | Live blockers | The same, refreshed every 10 s while awake |
 | DSM masks, LPIT, MSR 0xE2 | What the firmware and CPU offer |
+| GPU state after sleep / GPU reset | Whether the iGPU kept its state, and whether (and how fast) it was reset |
 
 ## The usual chain to S0ix, and where each step can fail
 
@@ -111,8 +127,9 @@ the `S0ixStandby` service.
 | Chipset devices power-gated | S0ix | blocker list empty | device drivers (e.g. CNVi Wi-Fi/BT) |
 | Platform enters S0ix | lowest power | `S0ix %` > 0 | all of the above |
 
-On the HP EliteBook 840 G8 everything up to the fourth row works (0.2.0:
-~0.7–1.0 W, Linux S0ix 0.76 W); CNVi is the remaining blocker.
+On the HP EliteBook 840 G8 everything up to the fourth row works (0.4.0:
+~0.7–1.0 W, Linux S0ix 0.76 W, graphics acceleration across sleep); CNVi
+(Intel Wi-Fi/BT) is the remaining blocker.
 
 ## Boot-args
 

@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.0 (unreleased): GPU reset on by default
+## 0.4.0 (2026-11-05): accelerated graphics across sleep
 
 - The GPU reset at a Deep Idle wake is now **the default** on Intel
   Gen11/Gen12 iGPUs (Ice Lake, Tiger Lake, Rocket Lake, Alder Lake, Raptor
@@ -12,6 +12,14 @@
 - `-s0ixgpuprobe` is now a debugging option only: it also probes an idle GPU
   (canary) and keeps the NVRAM record. No NVRAM writes by default.
 - Verified: 4/4 accelerated wakes (1–40 min) clean with WhateverXe 0.7.0.
+- Includes 0.3.0–0.3.4 below: the GPU probe and reset, `macos/wake-report.sh`
+  (one redacted report per sleep/wake) and the wake failure protocol in
+  docs/TESTING.md.
+
+Known limitations: SLP_S0 (real S0ix) not reached yet: CNVi (Intel
+Wi-Fi/BT) stays powered, sleep draws ~1 W. Background (dark) wakes with
+acceleration not yet confirmed overnight. One unexplained freeze after a
+30 min sleep (without acceleration), not reproduced in 3 identical runs.
 
 ## 0.3.4 (unreleased)
 

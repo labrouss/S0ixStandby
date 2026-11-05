@@ -111,5 +111,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           ls -la dist
+          # Release notes: this version's CHANGELOG section, then GitHub's commit list.
+          v="${GITHUB_REF_NAME#v}"
+          awk -v v="$v" '/^## /{p = (index($0, "## " v " ") == 1)} p' src/CHANGELOG.md > notes.md
+          test -s notes.md || echo "See CHANGELOG.md." > notes.md
           gh release create "${GITHUB_REF_NAME}" dist/* \
-            --repo "${GITHUB_REPOSITORY}" --title "${GITHUB_REF_NAME}" --generate-notes --prerelease
+            --repo "${GITHUB_REPOSITORY}" --title "S0ixStandby ${GITHUB_REF_NAME}" \
+            --notes-file notes.md --generate-notes --prerelease
