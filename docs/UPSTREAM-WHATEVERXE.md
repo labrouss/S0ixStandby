@@ -54,7 +54,8 @@ request on RCS/BCS, `GDRST` = `GEN11_GRDOM_FULL`, wait for clear). Done in
 S0ixStandby (default since 0.4.0, opt-out `-s0ixnogpureset`), 46–94 us. Afterwards WhateverXe reads
 `GFX_MODE` 0 in its wake init and Apple's restart re-enables execlists.
 Result: clean accelerated wakes, Metal 2, CSB counters with no errors,
-retries or fallbacks: 4/4 sleeps of 1–40 min, video playback after wake.
+retries or fallbacks: 4/4 sleeps of 1–40 min, video playback after wake,
+then a 4 h sleep with 5 background (dark) wakes, 6/6 resets, no panic.
 S0ixStandby 0.4.0 does this by default on Gen11/Gen12 iGPUs.
 
 **Suggestion**

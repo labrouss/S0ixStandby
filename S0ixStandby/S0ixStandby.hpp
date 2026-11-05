@@ -82,8 +82,8 @@ private:
 	// Deep Idle halt. Read-only MMIO.
 	volatile uint32_t *counterPage {nullptr};
 	bool pmcDump {false};
-	uint32_t pmcAtBoot[1024] {}, pmcAtHalt[1024] {};
-	bool pmcHaltValid {false};
+	uint32_t pmcAtBoot[1024] {}, pmcAtHalt[1024] {}, pmcAtActive[1024] {};
+	bool pmcHaltValid {false}, pmcActiveValid {false};   // before / right after the halt
 
 	// -s0ixd3: PCI endpoints with no driver (e.g. an Intel Integrated Sensor
 	// Hub on macOS) stay in D0 and can keep the PCH out of S0ix. They are kept
@@ -150,13 +150,13 @@ private:
 		uint64_t haltAtQuiesce[kHaltCount], haltAtActive[kHaltCount], tscAtQuiesce, tscAtActive;
 		bool gatingValid;
 		uint32_t gatingAtHalt[8];
-		bool pmcHaltValid;
+		bool pmcHaltValid, pmcActiveValid;
 		GpuState gpuAtSleep, gpuAtWake;
 		uint32_t gpuVerdict, gpuResetResult, gpuResetUs, gpuEnginesReady;
 		uint16_t wifiPmcsrSleep, wifiPmcsrWake;
 	};
 	Snapshot snap {};
-	uint32_t pmcSnap[1024] {};
+	uint32_t pmcSnap[1024] {}, pmcSnapActive[1024] {};
 
 	// -s0ixgpuprobe / -s0ixgpureset (S0ixGPU.cpp): Intel Gen11/12 iGPU state
 	// across Deep Idle, and an optional GT reset at wake before drivers wake.

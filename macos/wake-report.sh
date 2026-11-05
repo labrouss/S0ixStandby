@@ -15,6 +15,8 @@ OUT="wake-report-$(date +%Y%m%d-%H%M%S).txt"
 # pmset separates its columns with tabs or spaces.
 START=${1:-$(pmset -g log | grep -E "^[0-9]{4}-[0-9]{2}-[0-9]{2} .*[[:space:]]Sleep[[:space:]]+Entering Sleep" | grep -v "Maintenance Sleep" | tail -1 | cut -c1-19)}
 [ -n "$START" ] || START=$(date -v-1H '+%Y-%m-%d %H:%M:%S')
+# log show needs seconds: "2026-11-05 21:28" -> "2026-11-05 21:28:00".
+[[ "$START" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}\ [0-9]{2}:[0-9]{2}$ ]] && START="$START:00"
 # If this boot began after the sleep (panic or forced restart), the wake to
 # look at is in the previous boot: end the log window at this boot.
 BOOT=$(date -r "$(sysctl -n kern.boottime | sed -E 's/^\{ sec = ([0-9]+).*/\1/')" '+%Y-%m-%d %H:%M:%S')

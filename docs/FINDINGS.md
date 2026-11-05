@@ -205,8 +205,8 @@ Apple's `startGraphicsEngine` finds the blank GPU it was written for.
 WhateverXe reads `GFX_MODE` 0 at its wake init (after the reset), Apple then
 re-enables execlists. First accelerated wakes ever: 3/3 short sleeps clean,
 Metal 2 after wake, no CSB errors; then a 40 min sleep, clean, video
-playback after wake. Default since 0.4.0. Still to see: background (dark)
-wakes with acceleration (overnight).
+playback after wake. Default since 0.4.0. 4 h 8 min idle sleep on battery
+with 5 dark wakes: 6/6 resets (46–94 us), clean, ~0.5 W.
 
 ## 10. CNVi: why AirportItlwm leaves Wi-Fi in D0 (2026-11-05)
 
@@ -223,7 +223,34 @@ driver's suspend and runs `CNVW._PS3`.
 
 0.1.11 `-s0ixd3net` wrote PMCSR directly: config space (BARs, MSI) was not
 restored on D3 → D0 and Wi-Fi never came back. 0.4.1 `-s0ixwifipm` asks
-IOPCIFamily instead. Open: Bluetooth (same CNVi; a connected BT device stayed
+IOPCIFamily instead: Wi-Fi in D3 for the whole sleep, back by itself after
+wake, but **CNVI unchanged**, also with Bluetooth off.
+
+Linux (2026-11-05, 1 min s2idle): `module_blacklist=btusb,btintel` **85 %**,
+`module_blacklist=iwlwifi` **89 %** S0ix. So Linux does not need either CNVi
+driver, and CNVI shows `State: On` in Linux's power-gating list too: the
+CNVi power-gating bit is not what keeps SLP_S0 at 0. Next: the PMC
+requirement status registers (`LPM_STATUS_0..5`, Linux
+`substate_status_registers`) at the macOS halt vs Linux at S0ix entry
+(`macos/lpm-status.sh`, needs `-s0ixpmcdump`).
+
+First result (0.4.1, `-s0ixwifipm`): the six LPM status registers are at
+`PWRM+0x1C5C..0x1C70` on this PCH (not Linux's TGL offsets; found by matching
+Linux's values). At the macOS halt, differing from Linux at S0ix entry:
+**`CNVI_REQ` = 1** (Linux 0; macOS awake at boot: 0), `USB2_SUS_PG_Sys_REQ`
+and `MPHY_Core_DL_REQ` = 1, `PSF`/`SBR` fabric not gated (may still change
+after the halt snapshot). **Correction (Linux `/dev/mem` dumps):** those six registers are the
+**live** status; the **latched** set (state at package C10 entry, Linux's
+`substate_status_registers`) is at `PWRM+0x1C3C..0x1C50`, all zero in the
+macOS snapshots (boot and before the halt). Awake, live vs live, macOS and
+Linux nearly match (`CNVI_REQ` 0 on both; macOS keeps the USB2 PLL on, ADSP
+not in D3, no ISH driver). For these bits 1 most likely means "requirement
+met" (`CPU_C10_REQ` 0 awake, 1 in C10), so `CNVI_REQ` 1 before the halt is not
+a blocker; the bits still 0 there (`CPU_C10_REQ`, bits 13–15, PSF/SBR
+gating) only change after the CPU halts, on Linux too. The A–D1 tests
+(Bluetooth/Wi-Fi off, no `-s0ixwifipm`, `s0ixfn=0x18`) all gave identical
+pre-halt values for that reason. 0.4.2 adds a snapshot right after the halt
+to read the latched set. Open: Bluetooth (same CNVi; a connected BT device stayed
 connected through sleep, and CNVI stayed powered even without the Wi-Fi/BT
 kexts), so the test is Wi-Fi D3 alone, then with Bluetooth off.
 

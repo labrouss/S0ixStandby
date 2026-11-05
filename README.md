@@ -18,8 +18,8 @@ HP EliteBook 840 G8 (Tiger Lake), macOS Tahoe 26.7.1, OpenCore 1.0.8.
 | | Result on the test machine |
 |---|---|
 | Sleep | Deep Idle (`IOPMSystemSleepType` 7) from the Apple menu, the power button or idle sleep; session kept (lid: not yet tested) |
-| Power | **~0.7–1.0 W** asleep (Linux s2idle on the same machine: 0.76 W); package C10 99 %; EC in standby (breathing power LED) |
-| Wake | Power button, RTC alarms; maintenance dark wakes go back to sleep (11.5 h night, 26 dark wakes, clean) |
+| Power | **~0.5–1.0 W** asleep (Linux s2idle on the same machine: 0.76 W); package C10 99 %; EC in standby (breathing power LED) |
+| Wake | Power button, RTC alarms; maintenance dark wakes go back to sleep (11.5 h night, 26 dark wakes, clean; 4 h with acceleration, 5 dark wakes, clean) |
 | **Graphics acceleration** *(0.4.0)* | **WhateverXe acceleration survives sleep** (Tiger Lake Iris Xe, Metal after wake). The iGPU keeps its state in Deep Idle while Apple's driver restarts it as if it had been powered off; S0ixStandby resets the GPU at wake first. No boot-arg needed |
 | Reports | Per sleep: SLP_S0 residency, C-states, the PCH blocks still powered (likely SLP_S0 blockers), GPU state |
 
@@ -28,7 +28,6 @@ HP EliteBook 840 G8 (Tiger Lake), macOS Tahoe 26.7.1, OpenCore 1.0.8.
 | | |
 |---|---|
 | Real S0ix (SLP_S0) | Not reached yet: CNVi (Intel Wi-Fi/BT) stays powered because the macOS Wi-Fi/BT drivers don't power it down for sleep. That is why sleep is ~1 W, not lower. The fix belongs in those drivers |
-| Background wakes with acceleration | Not yet confirmed overnight (short and 40 min sleeps are clean) |
 | Rare freeze after wake | Seen once after a 30 min sleep (no acceleration, no panic), not reproduced in 3 identical runs; please report with `macos/wake-report.sh` |
 | Wi-Fi after wake | AirportItlwm reconnects after every wake (it stops the firmware for sleep) |
 
@@ -125,7 +124,7 @@ make DEBUG=1  # build/Debug/S0ixStandby.kext
 | [docs/HIBERNATION-FALLBACK.md](docs/HIBERNATION-FALLBACK.md) | Parallel track: hibernate-to-disk as a fallback |
 | [docs/UPSTREAM-WHATEVERXE.md](docs/UPSTREAM-WHATEVERXE.md) | Report for WhateverXe: why acceleration failed after Deep Idle |
 | [CHANGELOG.md](CHANGELOG.md) | Versions |
-| `macos/` | `s0ix-status.sh`, `wake-report.sh`, `sleep-power-test.sh`, `check-deepidle.sh`, `pmc-dump.sh` |
+| `macos/` | `s0ix-status.sh`, `wake-report.sh`, `lpm-status.sh`, `sleep-power-test.sh`, `check-deepidle.sh`, `pmc-dump.sh` |
 | `linux/` | `s2idle-test.sh`, `capture-baseline.sh` (reference measurements under Linux) |
 | `S0ixStandby/` | Kext source |
 | `tools/` | `privacy-scan.sh` (CI), `redact.sh` (used by the capture scripts) |

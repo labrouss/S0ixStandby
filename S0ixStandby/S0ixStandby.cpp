@@ -876,7 +876,13 @@ IOReturn S0ixStandby::callPlatformFunction(const OSSymbol *functionName, bool wa
 			return kIOReturnSuccess;
 		}
 		if (functionName->isEqualTo("IOPlatformActiveAction")) {
+			// Right after the halt: the PMC's latched LPM status (latched at
+			// package C10 entry by default) shows the state during the sleep.
 			if (cstateMask && tscAtQuiesce) { readHalt(haltAtActive); tscAtActive = rdtsc(); haltValid = true; }
+			if (pmcDump && counterPage && pmcHaltValid) {
+				for (uint32_t i = 0; i < 1024; i++) pmcAtActive[i] = counterPage[i];
+				pmcActiveValid = true;
+			}
 			return kIOReturnSuccess;
 		}
 	}
@@ -940,13 +946,16 @@ void S0ixStandby::onWake()
 	snap.gatingValid = gatingValid;
 	for (uint32_t i = 0; i < 8; i++) snap.gatingAtHalt[i] = gatingAtHalt[i];
 	snap.pmcHaltValid = pmcHaltValid;
+	snap.pmcActiveValid = pmcActiveValid;
+	if (pmcActiveValid)
+		for (uint32_t i = 0; i < 1024; i++) pmcSnapActive[i] = pmcAtActive[i];
 	snap.gpuAtSleep = gpuAtSleep; snap.gpuAtWake = gpuAtWake;
 	snap.gpuVerdict = gpuVerdict; snap.gpuResetResult = gpuResetResult;
 	snap.gpuResetUs = gpuResetUs; snap.gpuEnginesReady = gpuEnginesReady;
 	snap.wifiPmcsrSleep = wifiPmcsrSleep; snap.wifiPmcsrWake = wifiPmcsrWake;
 	if (pmcHaltValid)
 		for (uint32_t i = 0; i < 1024; i++) pmcSnap[i] = pmcAtHalt[i];
-	haltValid = gatingValid = pmcHaltValid = false;   // consumed by this cycle
+	haltValid = gatingValid = pmcHaltValid = pmcActiveValid = false;   // consumed by this cycle
 	if (counter && counterFreq) {
 		uint64_t mask = counterBits == 64 ? ~0ULL : 0xFFFFFFFFULL;
 		totalResidencyUs += ((counterAtWake - counterAtSleep) & mask) * 1000000ULL / counterFreq;
@@ -1053,6 +1062,13 @@ void S0ixStandby::publish()
 			d->release();
 		}
 		snap.pmcHaltValid = false;
+	}
+	if (snap.pmcActiveValid) {
+		if (OSData *d = OSData::withBytes(pmcSnapActive, sizeof(pmcSnapActive))) {
+			setProperty("PMC page after halt", d);
+			d->release();
+		}
+		snap.pmcActiveValid = false;
 	}
 
 	LOG("wake #%u: sleep type %u, SLP_S0 residency %llu us (%llu ticks)",

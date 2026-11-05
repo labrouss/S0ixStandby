@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.2 (unreleased)
+
+- `-s0ixpmcdump`: a third PMC page snapshot right after the Deep Idle halt
+  (`PMC page after halt`, taken in `IOPlatformActiveAction`). The PMC's
+  latched LPM status (latched at package C10 entry) is only meaningful
+  there.
+- `macos/lpm-status.sh` rewritten: latched registers (`PWRM+0x1C3C`) after
+  the halt vs Linux after s2idle, live registers (`PWRM+0x1C5C`) awake and
+  before the halt vs Linux awake. Register locations confirmed with Linux
+  `/dev/mem` dumps.
+
 ## 0.4.1 (unreleased): Wi-Fi to D3 for sleep (experiment)
 
 - `-s0ixwifipm` (experimental): 30 s after boot, calls
@@ -10,7 +21,13 @@
   AirportItlwm does not ask for (it leaves CNVi Wi-Fi in D0). Unlike the
   removed `-s0ixd3net` (0.1.11), nothing writes PMCSR behind IOPCIFamily.
   Reported: `Wi-Fi PCI PM` (result of the call) and `Wi-Fi PCI power state`
-  (PMCSR at the sleep and wake actions).
+  (PMCSR at the sleep and wake actions). Tested: Wi-Fi in D3 for the whole
+  sleep, back by itself after wake; CNVI unchanged.
+- `macos/lpm-status.sh`: decodes the PMC low-power-mode requirement status
+  registers (Tiger Lake-LP: `PWRM+0x1C5C`) from a `-s0ixpmcdump` snapshot at
+  the halt and compares them bit by bit, by name, with Linux at S0ix entry.
+- `wake-report.sh`: a start time without seconds works (`log show` returned
+  nothing).
 
 ## 0.4.0 (2026-11-05): accelerated graphics across sleep
 
@@ -23,14 +40,15 @@
   touched at wake at all.
 - `-s0ixgpuprobe` is now a debugging option only: it also probes an idle GPU
   (canary) and keeps the NVRAM record. No NVRAM writes by default.
-- Verified: 4/4 accelerated wakes (1–40 min) clean with WhateverXe 0.7.0.
+- Verified with WhateverXe 0.7.0: 4/4 accelerated wakes (1–40 min), then a
+  4 h 8 min idle sleep on battery with 5 RTC/maintenance dark wakes: 6/6 GPU
+  resets, all clean, no panic, ~0.5 W (36 % → 31 %).
 - Includes 0.3.0–0.3.4 below: the GPU probe and reset, `macos/wake-report.sh`
   (one redacted report per sleep/wake) and the wake failure protocol in
   docs/TESTING.md.
 
 Known limitations: SLP_S0 (real S0ix) not reached yet: CNVi (Intel
-Wi-Fi/BT) stays powered, sleep draws ~1 W. Background (dark) wakes with
-acceleration not yet confirmed overnight. One unexplained freeze after a
+Wi-Fi/BT) stays powered, sleep draws ~1 W. One unexplained freeze after a
 30 min sleep (without acceleration), not reproduced in 3 identical runs.
 
 ## 0.3.4 (unreleased)
