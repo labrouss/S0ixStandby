@@ -31,6 +31,7 @@
 
 #include <IOKit/IOLib.h>
 #include <IOKit/IODeviceTreeSupport.h>
+#include <IOKit/IOKitKeys.h>
 #include <pexpert/pexpert.h>
 
 #define LOG(fmt, ...)  IOLog("S0ixStandby: " fmt "\n", ##__VA_ARGS__)
@@ -208,6 +209,7 @@ bool S0ixStandby::setupGPU()
 	UInt8 pm = 0;
 	found->findPCICapability(kIOPCIPowerManagementCapability, &pm);
 
+	cleanNvram();
 	gpuDev = found;
 	gpuMap = map;
 	gpuPmCap = pm;
@@ -311,6 +313,21 @@ void S0ixStandby::gpuResetNow()
 
 // --- Report (from the publish timer) -------------------------------------------
 
+static const char *const kNvramVar = "s0ix-gpu-last";
+
+// 0.3.2 used the private force-sync key, which this macOS stores as a plain
+// variable instead: remove that leftover once at boot.
+void S0ixStandby::cleanNvram()
+{
+	IORegistryEntry *opts = IORegistryEntry::fromPath("/options", gIODTPlane);
+	if (!opts) return;
+	static const char *const junk[] = { "IONVRAM-FORCESYNCNOW-PROPERTY", kIONVRAMSyncNowPropertyKey };
+	for (const char *k : junk)
+		if (opts->getProperty(k))
+			opts->removeProperty(k);
+	opts->release();
+}
+
 // A graphics driver that fails after wake can panic before anyone can read
 // the registry: keep the last result in NVRAM too (nvram s0ix-gpu-last).
 // One small write per wake, only with -s0ixgpuprobe.
@@ -326,16 +343,26 @@ void S0ixStandby::recordGPU()
 	         b.valid, b.cmd, b.reg[kRegHws], b.reg[kRegMode], b.reg[kRegGpr0]);
 	IORegistryEntry *opts = IORegistryEntry::fromPath("/options", gIODTPlane);
 	if (!opts) return;
+	bool stored = false, synced = false;
 	if (OSData *d = OSData::withBytes(line, (unsigned)strlen(line))) {
-		opts->setProperty("s0ix-gpu-last", d);
+		stored = opts->setProperty(kNvramVar, d);
 		d->release();
-		// Commit now: the next thing to happen may be a panic.
-		if (OSString *s = OSString::withCString("s0ix-gpu-last")) {
-			opts->setProperty("IONVRAM-FORCESYNCNOW-PROPERTY", s);
-			s->release();
-		}
+		// Commit now: the next thing to happen may be a panic. Public key
+		// (IOKitKeys.h); IODTNVRAM handles it and stores nothing.
+		if (stored)
+			if (OSString *s = OSString::withCString(kNvramVar)) {
+				synced = opts->setProperty(kIONVRAMSyncNowPropertyKey, s);
+				s->release();
+				// A kernel that does not know the key stores it as a variable.
+				if (opts->getProperty(kIONVRAMSyncNowPropertyKey)) {
+					opts->removeProperty(kIONVRAMSyncNowPropertyKey);
+					synced = false;
+				}
+			}
 	}
 	opts->release();
+	setProperty("GPU NVRAM record", stored ? (synced ? "stored and committed" : "stored, commit refused")
+	                                       : "refused");
 }
 
 void S0ixStandby::gpuFormat(const GpuState &s, char *out, size_t size)

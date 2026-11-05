@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.3 (unreleased)
+
+- Fix: the NVRAM commit used the private `IONVRAM-FORCESYNCNOW-PROPERTY`
+  key, which macOS 26 stores as a plain variable (nothing committed, junk
+  variable left). Now the public `IONVRAM-SYNCNOW-PROPERTY` key; a leftover
+  of either key is removed at boot, and `GPU NVRAM record` reports whether
+  the record was stored and committed.
+
 ## 0.3.2 (unreleased)
 
 - GPU probe result is also written to NVRAM 0.5 s after each wake

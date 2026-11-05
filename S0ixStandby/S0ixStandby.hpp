@@ -186,6 +186,7 @@ private:
 	void gpuFormat(const GpuState &s, char *out, size_t size);
 	void publishGPU();
 	void recordGPU();
+	void cleanNvram();
 
 	void onSleep();
 	void onWake();
