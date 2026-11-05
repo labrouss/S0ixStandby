@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.1 (unreleased): Wi-Fi to D3 for sleep (experiment)
+
+- `-s0ixwifipm` (experimental): 30 s after boot, calls
+  `IOPCIDevice::enablePCIPowerManagement(D3)` for the Wi-Fi PCI function
+  (class 0x0280, with a driver), the call Apple's own drivers make.
+  IOPCIFamily then puts the function into D3 during sleep, runs its ACPI
+  `_PS3`, and restores its config space before the driver wakes, which
+  AirportItlwm does not ask for (it leaves CNVi Wi-Fi in D0). Unlike the
+  removed `-s0ixd3net` (0.1.11), nothing writes PMCSR behind IOPCIFamily.
+  Reported: `Wi-Fi PCI PM` (result of the call) and `Wi-Fi PCI power state`
+  (PMCSR at the sleep and wake actions).
+
 ## 0.4.0 (2026-11-05): accelerated graphics across sleep
 
 - The GPU reset at a Deep Idle wake is now **the default** on Intel

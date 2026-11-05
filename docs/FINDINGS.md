@@ -208,6 +208,25 @@ Metal 2 after wake, no CSB errors; then a 40 min sleep, clean, video
 playback after wake. Default since 0.4.0. Still to see: background (dark)
 wakes with acceleration (overnight).
 
+## 10. CNVi: why AirportItlwm leaves Wi-Fi in D0 (2026-11-05)
+
+AirportItlwm's sleep path (`setPowerStateOff` → `disableAdapter` → `iwx_stop`
+→ `iwx_stop_device`) quiesces the chip the way Linux iwlwifi does: interrupts
+off, DMA stopped, `MAC_ACCESS_REQ` released, APM stopped, `INIT_DONE` cleared,
+SW reset. What it never does is let the PCI function leave D0: it does not
+call `IOPCIDevice::enablePCIPowerManagement()` (Apple's drivers do; IOPCIFamily
+then writes D3 in `setPCIPowerState`, evaluates the device's ACPI `_PS3`, and
+restores config space on wake), it pins the domain on with
+`requestPowerDomainState(kIOPMPowerOn, …)`, and its PCI wrapper's
+`setPowerState` is a no-op. Linux puts the function into D3hot after the
+driver's suspend and runs `CNVW._PS3`.
+
+0.1.11 `-s0ixd3net` wrote PMCSR directly: config space (BARs, MSI) was not
+restored on D3 → D0 and Wi-Fi never came back. 0.4.1 `-s0ixwifipm` asks
+IOPCIFamily instead. Open: Bluetooth (same CNVi; a connected BT device stayed
+connected through sleep, and CNVI stayed powered even without the Wi-Fi/BT
+kexts), so the test is Wi-Fi D3 alone, then with Bluetooth off.
+
 ## Still to capture
 
 - A 30–60 min run of `s2idle-test.sh` for a tighter power number.

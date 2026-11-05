@@ -153,6 +153,7 @@ private:
 		bool pmcHaltValid;
 		GpuState gpuAtSleep, gpuAtWake;
 		uint32_t gpuVerdict, gpuResetResult, gpuResetUs, gpuEnginesReady;
+		uint16_t wifiPmcsrSleep, wifiPmcsrWake;
 	};
 	Snapshot snap {};
 	uint32_t pmcSnap[1024] {};
@@ -188,6 +189,19 @@ private:
 	void publishGPU();
 	void recordGPU();
 	void cleanNvram();
+
+	// -s0ixwifipm: let IOPCIFamily put the Wi-Fi PCI function into D3 for
+	// sleep (IOPCIDevice::enablePCIPowerManagement), as Apple's own drivers
+	// do. IOPCIFamily then also runs the device's ACPI _PS3 and restores its
+	// config space on wake. PMCSR is sampled at the sleep/wake actions.
+	bool wifiPM {false};
+	IOPCIDevice *wifiDev {nullptr};
+	UInt8 wifiPmCap {0};
+	uint32_t wifiTries {0};
+	IOTimerEventSource *wifiTimer {nullptr};
+	uint16_t wifiPmcsrSleep {0xFFFF}, wifiPmcsrWake {0xFFFF};
+	static void wifiTimerFired(OSObject *owner, IOTimerEventSource *sender);
+	bool setupWifiPM();
 
 	void onSleep();
 	void onWake();

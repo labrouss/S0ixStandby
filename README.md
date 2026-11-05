@@ -72,6 +72,7 @@ XCPM stops at core C6 in Deep Idle; with Ice Lake it reaches C10
 | `-s0ixd3` | keep PCI devices that have no macOS driver in D3hot (recommended) |
 | `-s0ixdbg` | verbose log |
 | `-s0ixnogpureset` | never reset the iGPU at wake |
+| `-s0ixwifipm` | experimental: Wi-Fi PCI function to D3 for sleep through IOPCIFamily (CNVi blocker work) |
 | `-s0ixgpuprobe` | debugging: also probe an idle iGPU and keep the last result in NVRAM (`nvram s0ix-gpu-last`) |
 | `-s0ixnodsm` | measure only, never call `_DSM` |
 | `s0ixfn=<mask>` | only call the listed `_DSM` functions (debugging) |

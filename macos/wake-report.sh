@@ -50,7 +50,7 @@ echo "== NVRAM records"
 nvram -p 2>/dev/null | grep -E "^s0ix-|SYNCNOW" || echo "(none)"
 echo
 echo "== S0ixStandby (current boot)"
-ioreg -rd1 -c S0ixStandby -w0 | grep -E '"(Sleep count|Last sleep type|Last SLP_S0 blockers at halt|Last C-state percent|GPU[^"]*)"' || echo "(not loaded)"
+ioreg -rd1 -c S0ixStandby -w0 | grep -E '"(Sleep count|Last sleep type|Last SLP_S0 blockers at halt|Last C-state percent|GPU[^"]*|Wi-Fi[^"]*)"' || echo "(not loaded)"
 echo
 echo "== Last 60 log lines of the window (any process)"
 echo "(after a forced power-off the newest entries may be missing: the log is written in batches)"

@@ -26,6 +26,9 @@
 //              (default)   Intel Gen11/12 iGPU: full GT reset at a Deep Idle wake,
 //                          before drivers, when the GPU kept its state (S0ixGPU.cpp)
 //              -s0ixnogpureset  never reset the GPU
+//              -s0ixwifipm let IOPCIFamily put the Wi-Fi PCI function in D3 for
+//                          sleep (enablePCIPowerManagement), with _PS3 and config
+//                          restore on wake (experimental)
 //              -s0ixgpuprobe  also probe an idle GPU (canary) and keep the last
 //                          result in NVRAM (s0ix-gpu-last); for debugging
 //              s0ixfn=N    bitmask of _DSM functions allowed to run, e.g.
@@ -208,6 +211,7 @@ bool S0ixStandby::start(IOService *provider)
 	// compatibility (same as the default).
 	gpuProbe = bootArg("-s0ixgpuprobe");
 	gpuReset = !bootArg("-s0ixnogpureset");
+	wifiPM = bootArg("-s0ixwifipm");
 	uint32_t fn = 0;
 	if (PE_parse_boot_argn("s0ixfn", &fn, sizeof(fn)))
 		fnAllow = fn;
@@ -276,11 +280,22 @@ bool S0ixStandby::start(IOService *provider)
 	}
 	setProperty("D3 unbound devices", d3Unbound);
 
+	if (wifiPM && workLoop) {
+		// The Wi-Fi driver must be attached first: set up 30 s after boot.
+		wifiTimer = IOTimerEventSource::timerEventSource(this, &S0ixStandby::wifiTimerFired);
+		if (wifiTimer && workLoop->addEventSource(wifiTimer) != kIOReturnSuccess)
+			OSSafeReleaseNULL(wifiTimer);
+		if (wifiTimer) wifiTimer->setTimeoutMS(30000);
+		setProperty("Wi-Fi PCI PM", "pending (set up 30 s after boot)");
+	}
+
 	if ((gpuProbe || gpuReset) && !setupGPU() && gpuTries < 100 && workLoop) {
 		// The iGPU nub may not be published yet this early: retry.
 		gpuTimer = IOTimerEventSource::timerEventSource(this, &S0ixStandby::gpuTimerFired);
 		if (gpuTimer && workLoop->addEventSource(gpuTimer) != kIOReturnSuccess)
 			OSSafeReleaseNULL(gpuTimer);
+	OSSafeReleaseNULL(wifiTimer);
+	OSSafeReleaseNULL(wifiDev);
 		if (gpuTimer) gpuTimer->setTimeoutMS(10000);
 	}
 
@@ -333,6 +348,10 @@ void S0ixStandby::stop(IOService *provider)
 	if (gpuTimer) {
 		gpuTimer->cancelTimeout();
 		if (workLoop) workLoop->removeEventSource(gpuTimer);
+	}
+	if (wifiTimer) {
+		wifiTimer->cancelTimeout();
+		if (workLoop) workLoop->removeEventSource(wifiTimer);
 	}
 	IOService::stop(provider);
 }
@@ -761,6 +780,49 @@ void S0ixStandby::scanUnbound()
 	IOLockUnlock(d3Lock);
 }
 
+void S0ixStandby::wifiTimerFired(OSObject *owner, IOTimerEventSource *)
+{
+	if (S0ixStandby *self = OSDynamicCast(S0ixStandby, owner))
+		if (!self->setupWifiPM() && ++self->wifiTries < 6 && self->wifiTimer)
+			self->wifiTimer->setTimeoutMS(10000);
+}
+
+// Wi-Fi = PCI class 0x0280 (network, other) with a driver attached.
+bool S0ixStandby::setupWifiPM()
+{
+	OSDictionary *match = serviceMatching("IOPCIDevice");
+	if (!match) return false;
+	OSIterator *it = getMatchingServices(match);
+	match->release();
+	if (!it) return false;
+	IOPCIDevice *found = nullptr;
+	while (OSObject *o = it->getNextObject()) {
+		IOPCIDevice *dev = OSDynamicCast(IOPCIDevice, o);
+		if (!dev || (dev->configRead32(kIOPCIConfigClassCode) >> 16) != 0x0280 || !dev->getClient())
+			continue;
+		found = dev;
+		found->retain();
+		break;
+	}
+	it->release();
+	if (!found) { setProperty("Wi-Fi PCI PM", "no Wi-Fi function with a driver yet"); return false; }
+
+	UInt8 pm = 0;
+	found->findPCICapability(kIOPCIPowerManagementCapability, &pm);
+	IOReturn ret = found->enablePCIPowerManagement(kPCIPMCSPowerStateD3);
+	char buf[96];
+	uint32_t id = found->configRead32(kIOPCIConfigVendorID);
+	snprintf(buf, sizeof(buf), "%02x:%02x.%x %04x:%04x: D3 for sleep %s (0x%x)",
+	         found->getBusNumber(), found->getDeviceNumber(), found->getFunctionNumber(),
+	         id & 0xFFFF, id >> 16, ret == kIOReturnSuccess ? "enabled" : "refused", ret);
+	setProperty("Wi-Fi PCI PM", buf);
+	LOG("Wi-Fi %s", buf);
+	if (ret != kIOReturnSuccess || !pm) { found->release(); return true; }   // done, nothing to sample
+	wifiDev = found;
+	wifiPmCap = pm;
+	return true;
+}
+
 // PMCSR is at capability + 4; bits 1:0 = power state (0 = D0, 3 = D3hot).
 // Re-asserts D3hot before each Deep Idle (in case firmware brought a device
 // back to D0). Devices stay in D3hot after wake: they have no driver.
@@ -837,6 +899,8 @@ void S0ixStandby::onSleep()
 		d3Enter();
 	if (gpuMMIO)
 		gpuSleep();
+	// Drivers (and IOPCIFamily's D3 transition) are done by now.
+	wifiPmcsrSleep = wifiDev ? wifiDev->configRead16(wifiPmCap + 4) : 0xFFFF;
 
 	entered = false;
 	if (dsmEnabled && lastSleepType == kSleepTypeDeepIdle &&
@@ -856,6 +920,7 @@ void S0ixStandby::onWake()
 	// Before any driver wakes: Apple's accelerator restarts the engines later.
 	if (gpuMMIO)
 		gpuWake();
+	wifiPmcsrWake = wifiDev ? wifiDev->configRead16(wifiPmCap + 4) : 0xFFFF;
 	counterAtWake = 0;
 	readCounter(counterAtWake);
 	timeAtWake = mach_absolute_time();
@@ -878,6 +943,7 @@ void S0ixStandby::onWake()
 	snap.gpuAtSleep = gpuAtSleep; snap.gpuAtWake = gpuAtWake;
 	snap.gpuVerdict = gpuVerdict; snap.gpuResetResult = gpuResetResult;
 	snap.gpuResetUs = gpuResetUs; snap.gpuEnginesReady = gpuEnginesReady;
+	snap.wifiPmcsrSleep = wifiPmcsrSleep; snap.wifiPmcsrWake = wifiPmcsrWake;
 	if (pmcHaltValid)
 		for (uint32_t i = 0; i < 1024; i++) pmcSnap[i] = pmcAtHalt[i];
 	haltValid = gatingValid = pmcHaltValid = false;   // consumed by this cycle
@@ -974,6 +1040,12 @@ void S0ixStandby::publish()
 	}
 	publishBlockers();
 	publishGPU();
+	if (wifiDev) {
+		char w[96];
+		snprintf(w, sizeof(w), "at sleep action D%u (0x%04x), at wake action D%u (0x%04x)",
+		         snap.wifiPmcsrSleep & 3, snap.wifiPmcsrSleep, snap.wifiPmcsrWake & 3, snap.wifiPmcsrWake);
+		setProperty("Wi-Fi PCI power state", w);
+	}
 
 	if (snap.pmcHaltValid) {
 		if (OSData *d = OSData::withBytes(pmcSnap, sizeof(pmcSnap))) {
