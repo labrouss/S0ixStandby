@@ -1,12 +1,34 @@
 # Changelog
 
+## 0.4.0 (unreleased): GPU reset on by default
+
+- The GPU reset at a Deep Idle wake is now **the default** on Intel
+  Gen11/Gen12 iGPUs (Ice Lake, Tiger Lake, Rocket Lake, Alder Lake, Raptor
+  Lake). It acts only when the GPU kept its state (an accelerator such as
+  WhateverXe was running), and only after Deep Idle (S3 wakes are left
+  alone). `-s0ixnogpureset` turns it off; `-s0ixgpureset` is still accepted.
+- Without an active accelerator at sleep (e.g. `-wex-noaccel`) the GPU is not
+  touched at wake at all.
+- `-s0ixgpuprobe` is now a debugging option only: it also probes an idle GPU
+  (canary) and keeps the NVRAM record. No NVRAM writes by default.
+- Verified: 4/4 accelerated wakes (1–40 min) clean with WhateverXe 0.7.0.
+
 ## 0.3.4 (unreleased)
+
+**Accelerated graphics survive Deep Idle** with `-s0ixgpureset` (WhateverXe
+0.7.0 on Tiger Lake, first time): with acceleration the iGPU keeps its
+state through Deep Idle (`retained`), and Apple's S3-style wake path
+restarted it on top of that, ending in WhateverXe's
+`ElementSwitch-second-item-null` panic. The GT reset at the wake action
+(54–94 us) fixes it; 3/3 short sleeps clean.
 
 - NVRAM record: macOS 26 ignores the sync-now property key as well (0.3.3
   reported `stored, commit refused`); the record is now committed with
   `IODTNVRAM::sync()`, as Lilu does.
 - `wake-report.sh`: finds the sleep start in pmset logs that use tabs,
-  skips maintenance re-sleeps, lists only lines from the window.
+  skips maintenance re-sleeps, lists only lines from the window; after a
+  panic/forced restart the log window ends at this boot (previous boot's
+  wake); panic text extraction fixed (`grep: maximum repetition`).
 
 ## 0.3.3 (unreleased)
 

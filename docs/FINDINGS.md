@@ -192,6 +192,22 @@ keeps the probe result in NVRAM to survive the panic. If it is blank there
 too, the panic is software state (WhateverXe/Apple execlist bookkeeping not
 cleared on wake), to be fixed in WhateverXe.
 
+Result with acceleration on (0.3.4, NVRAM record survived the panic):
+**`retained`**: status page address `0x40004000` and `GFX_MODE` 0x8
+(execlists) identical at sleep and at the wake action, i.e. before Apple's
+driver restarts the engines. With the accelerator running (RC6 enabled) the
+GT keeps its state through Deep Idle, and Apple's S3-style restart lands on
+a GPU that is not blank. Next: `-s0ixgpureset` with acceleration.
+
+**Fix confirmed (0.3.4, `-s0ixgpureset`, acceleration on):** at the wake
+action the GT is reset (GDRST full, 54–94 us, render + blitter ready), so
+Apple's `startGraphicsEngine` finds the blank GPU it was written for.
+WhateverXe reads `GFX_MODE` 0 at its wake init (after the reset), Apple then
+re-enables execlists. First accelerated wakes ever: 3/3 short sleeps clean,
+Metal 2 after wake, no CSB errors; then a 40 min sleep, clean, video
+playback after wake. Default since 0.4.0. Still to see: background (dark)
+wakes with acceleration (overnight).
+
 ## Still to capture
 
 - A 30–60 min run of `s2idle-test.sh` for a tighter power number.

@@ -9,15 +9,17 @@
 //  the driver. Linux handles the same situation by resetting the GT engines
 //  on resume (i915 intel_gt_sanitize / __intel_gt_reset).
 //
-//    -s0ixgpuprobe  read-only: a few GT registers in the sleep action and again
-//                   in the wake action (before any driver wakes), plus a
-//                   verdict "retained" / "lost power". With no graphics
-//                   acceleration (nothing programs the engines) a canary is
-//                   written to a render-engine general purpose register.
-//    -s0ixgpureset  implies the probe; if the GT kept its state, a full GT
-//                   reset (GDRST) in the wake action, before Apple's driver
-//                   restarts the engines. The display is a separate reset
-//                   domain and is not touched.
+//    default        a few GT registers are read in the sleep action and again
+//                   in the wake action (before any driver wakes). If the GT
+//                   kept its state across a Deep Idle sleep, a full GT reset
+//                   (GDRST) follows, before Apple's driver restarts the
+//                   engines. The display is a separate reset domain and is
+//                   not touched. When no accelerator programmed the engines
+//                   (e.g. WhateverXe -wex-noaccel) nothing is touched at wake.
+//    -s0ixnogpureset  no reset (registers are still reported).
+//    -s0ixgpuprobe  debugging: an idle GPU is probed too (a canary written to
+//                   a render-engine general purpose register), and the last
+//                   result is kept in NVRAM (nvram s0ix-gpu-last).
 //
 //  Intel Gen11 (Ice Lake) and Gen12 (Tiger Lake, Rocket Lake, Alder Lake,
 //  Raptor Lake) iGPUs only, selected by CPU model. Register offsets and the
@@ -78,12 +80,16 @@ static const uint8_t kGpuModels[] = {
 
 static const char *const kVerdictName[] = {
 	"unknown", "retained", "lost power", "lost power (PCI config space reset)",
+	"not checked (no accelerator active at sleep)",
 };
+enum { kVerdictCount = 5, kResetCount = 9 };
 static const char *const kResetName[] = {
 	"not attempted", "done", "skipped: GPU state was lost (nothing to do)",
 	"skipped: no verdict", "failed: forcewake timeout", "failed: GDRST timeout",
-	"skipped: GPU not accessible at wake",
+	"skipped: GPU not accessible at wake", "skipped: no accelerator active (nothing to do)",
+	"skipped: not a Deep Idle wake",
 };
+static const uint32_t kSleepTypeDeepIdleGpu = 7;   // kIOPMSleepTypeDeepIdle
 
 // --- MMIO helpers -------------------------------------------------------------
 
@@ -218,8 +224,9 @@ bool S0ixStandby::setupGPU()
 
 	char buf[96];
 	uint32_t id = found->configRead32(kIOPCIConfigVendorID);
-	snprintf(buf, sizeof(buf), "00:02.0 %04x:%04x, probe on%s", id & 0xFFFF, id >> 16,
-	         gpuReset ? ", reset on wake if state kept" : "");
+	snprintf(buf, sizeof(buf), "00:02.0 %04x:%04x, %s%s", id & 0xFFFF, id >> 16,
+	         gpuReset ? "reset on Deep Idle wake if state kept" : "no reset (-s0ixnogpureset)",
+	         gpuProbe ? ", full probe + NVRAM record" : "");
 	setProperty("GPU", buf);
 	LOG("GPU %s", buf);
 	return true;
@@ -257,17 +264,27 @@ void S0ixStandby::gpuCapture(GpuState &s, bool writeCanary, const GpuState *ref)
 // Sleep action: all drivers are asleep (Apple's accelerator stopped the engines).
 void S0ixStandby::gpuSleep()
 {
-	gpuCapture(gpuAtSleep, true, nullptr);
+	gpuCapture(gpuAtSleep, gpuProbe, nullptr);
+	// Without an accelerator nothing depends on the GT's state: unless the
+	// full probe is on, leave the GPU alone at wake.
+	gpuIdleAtSleep = gpuAtSleep.valid && !gpuAtSleep.canary &&
+	                 gpuAtSleep.reg[kRegHws] == 0 && !(gpuAtSleep.reg[kRegMode] & 0x8);
 }
 
 // Wake action: before any driver wakes.
 void S0ixStandby::gpuWake()
 {
-	gpuCapture(gpuAtWake, false, &gpuAtSleep);
 	gpuVerdict = 0;
 	gpuResetResult = 0;
 	gpuResetUs = 0;
 	gpuEnginesReady = 0;
+	if (gpuIdleAtSleep && !gpuProbe) {
+		gpuAtWake = GpuState {};
+		gpuVerdict = 4;                       // accelerator idle: not checked
+		if (gpuReset) gpuResetResult = 7;
+		return;
+	}
+	gpuCapture(gpuAtWake, false, &gpuAtSleep);
 
 	if (gpuAtSleep.valid && !gpuAtWake.valid && gpuAtWake.why == 3)
 		gpuVerdict = 3;                       // PCI config space was reset
@@ -280,7 +297,11 @@ void S0ixStandby::gpuWake()
 	}
 	if (gpuVerdict == 1) gpuRetainedCount++;
 
-	if (gpuReset) gpuResetNow();
+	// Only Deep Idle keeps the GT powered; after S3 it starts blank anyway.
+	if (gpuReset) {
+		if (lastSleepType == kSleepTypeDeepIdleGpu) gpuResetNow();
+		else gpuResetResult = 8;
+	}
 	gpuRestoreDecode(gpuAtWake);
 }
 
@@ -338,7 +359,7 @@ void S0ixStandby::recordGPU()
 	const GpuState &a = snap.gpuAtSleep, &b = snap.gpuAtWake;
 	snprintf(line, sizeof(line),
 	         "wake %u type %u: %s; reset %u/%uus; sleep v%u HWS=%x MODE=%x GPR0=%x; wake v%u cmd=%x HWS=%x MODE=%x GPR0=%x",
-	         snap.sleepCount, snap.sleepType, kVerdictName[snap.gpuVerdict < 4 ? snap.gpuVerdict : 0],
+	         snap.sleepCount, snap.sleepType, kVerdictName[snap.gpuVerdict < kVerdictCount ? snap.gpuVerdict : 0],
 	         snap.gpuResetResult, snap.gpuResetUs,
 	         a.valid, a.reg[kRegHws], a.reg[kRegMode], a.reg[kRegGpr0],
 	         b.valid, b.cmd, b.reg[kRegHws], b.reg[kRegMode], b.reg[kRegGpr0]);
@@ -385,11 +406,12 @@ void S0ixStandby::publishGPU()
 	char buf[400];
 	gpuFormat(snap.gpuAtSleep, buf, sizeof(buf));
 	setProperty("GPU registers at sleep", buf);
-	gpuFormat(snap.gpuAtWake, buf, sizeof(buf));
+	if (snap.gpuVerdict == 4) snprintf(buf, sizeof(buf), "not read (no accelerator active at sleep)");
+	else gpuFormat(snap.gpuAtWake, buf, sizeof(buf));
 	setProperty("GPU registers at wake", buf);
 
 	const char *how = snap.gpuAtSleep.canary ? " (canary)" : " (status page / execlist mode)";
-	snprintf(buf, sizeof(buf), "%s%s", kVerdictName[snap.gpuVerdict < 4 ? snap.gpuVerdict : 0],
+	snprintf(buf, sizeof(buf), "%s%s", kVerdictName[snap.gpuVerdict < kVerdictCount ? snap.gpuVerdict : 0],
 	         (snap.gpuVerdict == 1 || snap.gpuVerdict == 2) ? how : "");
 	setProperty("GPU state after sleep", buf);
 	setProperty("GPU retained count", (unsigned long long)gpuRetainedCount, 32);
@@ -399,11 +421,11 @@ void S0ixStandby::publishGPU()
 			snprintf(buf, sizeof(buf), "%s in %u us (engines ready 0x%x)",
 			         kResetName[snap.gpuResetResult], snap.gpuResetUs, snap.gpuEnginesReady);
 		else
-			snprintf(buf, sizeof(buf), "%s", kResetName[snap.gpuResetResult < 7 ? snap.gpuResetResult : 0]);
+			snprintf(buf, sizeof(buf), "%s", kResetName[snap.gpuResetResult < kResetCount ? snap.gpuResetResult : 0]);
 		setProperty("GPU reset", buf);
 		setProperty("GPU reset count", (unsigned long long)gpuResetCount, 32);
 	}
-	recordGPU();
-	LOG("wake #%u: GPU %s%s%s", snap.sleepCount, kVerdictName[snap.gpuVerdict < 4 ? snap.gpuVerdict : 0],
-	    gpuReset ? ", reset " : "", gpuReset ? kResetName[snap.gpuResetResult < 7 ? snap.gpuResetResult : 0] : "");
+	if (gpuProbe) recordGPU();
+	LOG("wake #%u: GPU %s%s%s", snap.sleepCount, kVerdictName[snap.gpuVerdict < kVerdictCount ? snap.gpuVerdict : 0],
+	    gpuReset ? ", reset " : "", gpuReset ? kResetName[snap.gpuResetResult < kResetCount ? snap.gpuResetResult : 0] : "");
 }

@@ -125,8 +125,9 @@ On the HP EliteBook 840 G8 everything up to the fourth row works (0.2.0:
 | `-s0ixdbg` | verbose log |
 | `-s0ixpmcdump` | snapshot the PMC register page at boot and at each halt |
 | `-s0ixnocst` | don't read CPU C-state MSRs |
-| `-s0ixgpuprobe` | Intel Gen11/12 iGPU: read a few GPU engine registers before each sleep and again at wake (before any driver wakes), and report whether the GPU kept its state (also saved to NVRAM: `nvram s0ix-gpu-last`, survives a panic) |
-| `-s0ixgpureset` | probe + full GPU engine reset at wake when the GPU kept its state, so the graphics driver finds the blank GPU it expects (experimental) |
+| (default) | Intel Gen11/12 iGPU: at a Deep Idle wake, before any driver wakes, check whether the GPU kept its state and if so reset its engines, so the graphics driver finds the blank GPU it expects |
+| `-s0ixnogpureset` | never reset the GPU |
+| `-s0ixgpuprobe` | debugging: also probe an idle GPU and keep the last result in NVRAM (`nvram s0ix-gpu-last`, survives a panic) |
 
 ## What it does not do
 

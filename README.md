@@ -33,7 +33,7 @@ a sleep/wake sequence diagram.
 | | |
 |---|---|
 | Real S0ix (SLP_S0) | Not reached yet: CNVi (Intel Wi-Fi/BT) stays powered; fix belongs in the Wi-Fi/BT drivers |
-| Graphics | WhateverXe acceleration panics on any wake; boot with `-wex-noaccel` (no acceleration). Under investigation: `-s0ixgpuprobe` / `-s0ixgpureset` (0.3.0), see docs/FINDINGS.md §9 |
+| Graphics | WhateverXe acceleration works across sleep since 0.4.0, with no extra boot-arg: the iGPU keeps its state in Deep Idle and Apple's driver restarts it as if it had been powered off, so S0ixStandby resets it at wake first (docs/FINDINGS.md §9). Background (dark) wakes with acceleration: still to confirm overnight |
 | Dark wake → full wake | One hang seen (`0x32`), not reproduced since; avoid pressing power during a dark wake |
 
 ### Recommended configuration (tested)

@@ -23,10 +23,11 @@
 //                          boot, re-applied before each Deep Idle)
 //              -s0ixpmcdump snapshot the PMC register page (with the SLP_S0
 //                          counter) at boot and at each Deep Idle halt
-//              -s0ixgpuprobe Intel iGPU registers before/after each sleep and a
-//                          verdict: did the GPU keep its state (S0ixGPU.cpp)
-//              -s0ixgpureset probe + full GT reset at wake (before drivers) when
-//                          the GPU kept its state
+//              (default)   Intel Gen11/12 iGPU: full GT reset at a Deep Idle wake,
+//                          before drivers, when the GPU kept its state (S0ixGPU.cpp)
+//              -s0ixnogpureset  never reset the GPU
+//              -s0ixgpuprobe  also probe an idle GPU (canary) and keep the last
+//                          result in NVRAM (s0ix-gpu-last); for debugging
 //              s0ixfn=N    bitmask of _DSM functions allowed to run, e.g.
 //                          s0ixfn=0x18 = display off/on only (3,4),
 //                          s0ixfn=0x60 = entry/exit only (5,6). Default: all.
@@ -201,8 +202,12 @@ bool S0ixStandby::start(IOService *provider)
 	pmcDump = bootArg("-s0ixpmcdump");
 	d3Unbound = bootArg("-s0ixd3");
 	dsmEnabled = !bootArg("-s0ixnodsm");
-	gpuReset = bootArg("-s0ixgpureset");
-	gpuProbe = gpuReset || bootArg("-s0ixgpuprobe");
+	// GPU reset at Deep Idle wake: on by default (Gen11/Gen12 iGPU only,
+	// decided in setupGPU); -s0ixnogpureset turns it off. -s0ixgpuprobe adds
+	// the full probe (canary, NVRAM record); -s0ixgpureset is accepted for
+	// compatibility (same as the default).
+	gpuProbe = bootArg("-s0ixgpuprobe");
+	gpuReset = !bootArg("-s0ixnogpureset");
 	uint32_t fn = 0;
 	if (PE_parse_boot_argn("s0ixfn", &fn, sizeof(fn)))
 		fnAllow = fn;
@@ -271,7 +276,7 @@ bool S0ixStandby::start(IOService *provider)
 	}
 	setProperty("D3 unbound devices", d3Unbound);
 
-	if (gpuProbe && !setupGPU() && gpuTries < 100 && workLoop) {
+	if ((gpuProbe || gpuReset) && !setupGPU() && gpuTries < 100 && workLoop) {
 		// The iGPU nub may not be published yet this early: retry.
 		gpuTimer = IOTimerEventSource::timerEventSource(this, &S0ixStandby::gpuTimerFired);
 		if (gpuTimer && workLoop->addEventSource(gpuTimer) != kIOReturnSuccess)

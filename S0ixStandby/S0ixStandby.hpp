@@ -168,7 +168,8 @@ private:
 	uint32_t gpuTries {0};
 	IOTimerEventSource *gpuTimer {nullptr};
 	GpuState gpuAtSleep {}, gpuAtWake {};
-	uint32_t gpuVerdict {0};                 // 0 unknown, 1 retained, 2 lost power, 3 PCI config reset
+	bool gpuIdleAtSleep {false};             // no accelerator programmed the GT
+	uint32_t gpuVerdict {0};                 // 0 unknown, 1 retained, 2 lost power, 3 PCI config reset, 4 not checked
 	uint32_t gpuResetResult {0}, gpuResetUs {0}, gpuEnginesReady {0};
 	uint32_t gpuResetCount {0}, gpuRetainedCount {0};
 	bool setupGPU();
