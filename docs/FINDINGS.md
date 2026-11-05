@@ -182,6 +182,16 @@ resets the GT on resume for the same reason.
 Test: S0ixStandby 0.3.0 `-s0ixgpuprobe` (does the GPU keep its state?) and
 `-s0ixgpureset` (full GT reset at wake, before the driver restarts the engines).
 
+Result with `-wex-noaccel` (0.3.1, 3.3 min): **the GT loses its engine
+state** (canary in render GPR0 gone), while the PCI function keeps its
+config (same BAR0, D0; only memory/IO/bus-master bits cleared until macOS's
+PCI layer restores them). So without acceleration the GPU does wake blank,
+as Apple's driver assumes. Open: the same with acceleration on (the driver
+enables RC6, whose hardware save/restore may behave differently); 0.3.2
+keeps the probe result in NVRAM to survive the panic. If it is blank there
+too, the panic is software state (WhateverXe/Apple execlist bookkeeping not
+cleared on wake), to be fixed in WhateverXe.
+
 ## Still to capture
 
 - A 30–60 min run of `s2idle-test.sh` for a tighter power number.

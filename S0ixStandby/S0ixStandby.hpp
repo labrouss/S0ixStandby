@@ -185,6 +185,7 @@ private:
 	void gpuResetNow();
 	void gpuFormat(const GpuState &s, char *out, size_t size);
 	void publishGPU();
+	void recordGPU();
 
 	void onSleep();
 	void onWake();

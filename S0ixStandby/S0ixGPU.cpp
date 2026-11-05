@@ -30,6 +30,7 @@
 #include "S0ixStandby.hpp"
 
 #include <IOKit/IOLib.h>
+#include <IOKit/IODeviceTreeSupport.h>
 #include <pexpert/pexpert.h>
 
 #define LOG(fmt, ...)  IOLog("S0ixStandby: " fmt "\n", ##__VA_ARGS__)
@@ -310,6 +311,33 @@ void S0ixStandby::gpuResetNow()
 
 // --- Report (from the publish timer) -------------------------------------------
 
+// A graphics driver that fails after wake can panic before anyone can read
+// the registry: keep the last result in NVRAM too (nvram s0ix-gpu-last).
+// One small write per wake, only with -s0ixgpuprobe.
+void S0ixStandby::recordGPU()
+{
+	char line[200];
+	const GpuState &a = snap.gpuAtSleep, &b = snap.gpuAtWake;
+	snprintf(line, sizeof(line),
+	         "wake %u type %u: %s; reset %u/%uus; sleep v%u HWS=%x MODE=%x GPR0=%x; wake v%u cmd=%x HWS=%x MODE=%x GPR0=%x",
+	         snap.sleepCount, snap.sleepType, kVerdictName[snap.gpuVerdict < 4 ? snap.gpuVerdict : 0],
+	         snap.gpuResetResult, snap.gpuResetUs,
+	         a.valid, a.reg[kRegHws], a.reg[kRegMode], a.reg[kRegGpr0],
+	         b.valid, b.cmd, b.reg[kRegHws], b.reg[kRegMode], b.reg[kRegGpr0]);
+	IORegistryEntry *opts = IORegistryEntry::fromPath("/options", gIODTPlane);
+	if (!opts) return;
+	if (OSData *d = OSData::withBytes(line, (unsigned)strlen(line))) {
+		opts->setProperty("s0ix-gpu-last", d);
+		d->release();
+		// Commit now: the next thing to happen may be a panic.
+		if (OSString *s = OSString::withCString("s0ix-gpu-last")) {
+			opts->setProperty("IONVRAM-FORCESYNCNOW-PROPERTY", s);
+			s->release();
+		}
+	}
+	opts->release();
+}
+
 void S0ixStandby::gpuFormat(const GpuState &s, char *out, size_t size)
 {
 	static const char *const why[] = { "", "not in D0", "forcewake timeout",
@@ -350,6 +378,7 @@ void S0ixStandby::publishGPU()
 		setProperty("GPU reset", buf);
 		setProperty("GPU reset count", (unsigned long long)gpuResetCount, 32);
 	}
+	recordGPU();
 	LOG("wake #%u: GPU %s%s%s", snap.sleepCount, kVerdictName[snap.gpuVerdict < 4 ? snap.gpuVerdict : 0],
 	    gpuReset ? ", reset " : "", gpuReset ? kResetName[snap.gpuResetResult < 7 ? snap.gpuResetResult : 0] : "");
 }

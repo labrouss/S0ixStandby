@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.2 (unreleased)
+
+- GPU probe result is also written to NVRAM 0.5 s after each wake
+  (`nvram s0ix-gpu-last`), committed immediately, so it survives a graphics
+  panic a few seconds later. Only with `-s0ixgpuprobe`/`-s0ixgpureset`.
+
 ## 0.3.1 (unreleased)
 
 - GPU probe: at the wake action the iGPU is in D0 but its PCI memory decode
