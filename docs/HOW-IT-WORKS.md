@@ -125,10 +125,14 @@ On the HP EliteBook 840 G8 everything up to the fourth row works (0.2.0:
 | `-s0ixdbg` | verbose log |
 | `-s0ixpmcdump` | snapshot the PMC register page at boot and at each halt |
 | `-s0ixnocst` | don't read CPU C-state MSRs |
+| `-s0ixgpuprobe` | Intel Gen11/12 iGPU: read a few GPU engine registers before each sleep and again at wake (before any driver wakes), and report whether the GPU kept its state |
+| `-s0ixgpureset` | probe + full GPU engine reset at wake when the GPU kept its state, so the graphics driver finds the blank GPU it expects (experimental) |
 
 ## What it does not do
 
 - It doesn't make the laptop sleep: the SSDT does.
 - It doesn't patch macOS or any driver, and doesn't change how drivers sleep.
+  (`-s0ixgpureset` resets the GPU *hardware* at wake, before its driver runs;
+  the driver itself is untouched.)
 - It doesn't force a sleep state: if macOS picks S3, the kext does nothing.
 - It can't power down devices whose drivers keep them on: that's a driver fix.

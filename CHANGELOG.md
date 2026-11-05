@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.0 (unreleased): GPU state across Deep Idle
+
+- `-s0ixgpuprobe` (Intel Gen11/Gen12 iGPU: Ice Lake, Tiger Lake, Rocket
+  Lake, Alder Lake, Raptor Lake): reads a few GPU engine registers in the
+  sleep action and again in the wake action, before any driver wakes, and
+  publishes whether the GPU kept its state across the sleep (`GPU state after
+  sleep`). Without graphics acceleration a canary is written to a render
+  engine general purpose register. Read-only otherwise.
+- `-s0ixgpureset` (experimental): probe + a full GPU engine reset (GDRST) at
+  wake when the GPU kept its state, so the graphics driver finds the blank GPU
+  its S3-style wake path expects (as Linux does on resume). Display untouched.
+- `s0ix-status.sh` shows the GPU section.
+- Cleanup: removed a stray (harmless) timer release in the `-s0ixd3` setup.
+
 ## 0.2.0 (2026-11-03): first pre-release
 
 First usable release: real sleep (macOS Deep Idle) on a Tiger Lake laptop at

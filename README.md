@@ -33,7 +33,7 @@ a sleep/wake sequence diagram.
 | | |
 |---|---|
 | Real S0ix (SLP_S0) | Not reached yet: CNVi (Intel Wi-Fi/BT) stays powered; fix belongs in the Wi-Fi/BT drivers |
-| Graphics | WhateverXe acceleration panics on any wake; boot with `-wex-noaccel` (no acceleration) |
+| Graphics | WhateverXe acceleration panics on any wake; boot with `-wex-noaccel` (no acceleration). Under investigation: `-s0ixgpuprobe` / `-s0ixgpureset` (0.3.0), see docs/FINDINGS.md §9 |
 | Dark wake → full wake | One hang seen (`0x32`), not reproduced since; avoid pressing power during a dark wake |
 
 ### Recommended configuration (tested)

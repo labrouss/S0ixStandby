@@ -34,6 +34,14 @@ public:
 	IOReturn callPlatformFunction(const OSSymbol *functionName, bool waitForFunction,
 	                              void *param1, void *param2, void *param3, void *param4) override;
 
+	enum { kGpuRegCount = 12 };              // GT registers sampled by the GPU probe
+	struct GpuState {
+		bool valid, canary;
+		uint8_t why;                         // why not valid
+		uint16_t cmd, pmcsr;
+		uint32_t reg[kGpuRegCount];
+	};
+
 private:
 	// LPS0 _DSM GUID families (index into mask/guid tables)
 	enum Family : uint32_t { kIntel = 0, kMicrosoft = 1, kAMD = 2, kFamilyCount = 3 };
@@ -141,9 +149,38 @@ private:
 		bool gatingValid;
 		uint32_t gatingAtHalt[8];
 		bool pmcHaltValid;
+		GpuState gpuAtSleep, gpuAtWake;
+		uint32_t gpuVerdict, gpuResetResult, gpuResetUs, gpuEnginesReady;
 	};
 	Snapshot snap {};
 	uint32_t pmcSnap[1024] {};
+
+	// -s0ixgpuprobe / -s0ixgpureset (S0ixGPU.cpp): Intel Gen11/12 iGPU state
+	// across Deep Idle, and an optional GT reset at wake before drivers wake.
+	bool gpuProbe {false}, gpuReset {false};
+	uint32_t cpuModel {0};
+	IOPCIDevice *gpuDev {nullptr};
+	IOMemoryMap *gpuMap {nullptr};
+	volatile uint8_t *gpuMMIO {nullptr};
+	UInt8 gpuPmCap {0};
+	uint32_t gpuTries {0};
+	IOTimerEventSource *gpuTimer {nullptr};
+	GpuState gpuAtSleep {}, gpuAtWake {};
+	uint32_t gpuVerdict {0};                 // 0 unknown, 1 retained, 2 lost power
+	uint32_t gpuResetResult {0}, gpuResetUs {0}, gpuEnginesReady {0};
+	uint32_t gpuResetCount {0}, gpuRetainedCount {0};
+	bool setupGPU();
+	static void gpuTimerFired(OSObject *owner, IOTimerEventSource *sender);
+	uint32_t gpuRead(uint32_t off);
+	void gpuWrite(uint32_t off, uint32_t v);
+	bool gpuPoll(uint32_t off, uint32_t mask, uint32_t want, uint32_t timeoutUs);
+	bool gpuForcewake(bool on, bool *took);
+	bool gpuAccessible(GpuState &s);
+	void gpuCapture(GpuState &s, bool writeCanary);
+	void gpuSleep();
+	void gpuWake();
+	void gpuFormat(const GpuState &s, char *out, size_t size);
+	void publishGPU();
 
 	void onSleep();
 	void onWake();

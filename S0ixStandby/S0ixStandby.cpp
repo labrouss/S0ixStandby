@@ -23,6 +23,10 @@
 //                          boot, re-applied before each Deep Idle)
 //              -s0ixpmcdump snapshot the PMC register page (with the SLP_S0
 //                          counter) at boot and at each Deep Idle halt
+//              -s0ixgpuprobe Intel iGPU registers before/after each sleep and a
+//                          verdict: did the GPU keep its state (S0ixGPU.cpp)
+//              -s0ixgpureset probe + full GT reset at wake (before drivers) when
+//                          the GPU kept its state
 //              s0ixfn=N    bitmask of _DSM functions allowed to run, e.g.
 //                          s0ixfn=0x18 = display off/on only (3,4),
 //                          s0ixfn=0x60 = entry/exit only (5,6). Default: all.
@@ -197,6 +201,8 @@ bool S0ixStandby::start(IOService *provider)
 	pmcDump = bootArg("-s0ixpmcdump");
 	d3Unbound = bootArg("-s0ixd3");
 	dsmEnabled = !bootArg("-s0ixnodsm");
+	gpuReset = bootArg("-s0ixgpureset");
+	gpuProbe = gpuReset || bootArg("-s0ixgpuprobe");
 	uint32_t fn = 0;
 	if (PE_parse_boot_argn("s0ixfn", &fn, sizeof(fn)))
 		fnAllow = fn;
@@ -229,7 +235,9 @@ bool S0ixStandby::start(IOService *provider)
 	}
 
 	uint32_t model = 0;
-	cstateMask = bootArg("-s0ixnocst") ? 0 : cstateSupport(model);
+	cstateMask = cstateSupport(model);
+	if (bootArg("-s0ixnocst")) cstateMask = 0;
+	cpuModel = model;
 	setProperty("CPU model", (unsigned long long)model, 32);
 	setupBlockerReport(model);
 	setProperty("C-state meter", cstateMask != 0);
@@ -262,6 +270,14 @@ bool S0ixStandby::start(IOService *provider)
 		}
 	}
 	setProperty("D3 unbound devices", d3Unbound);
+
+	if (gpuProbe && !setupGPU() && gpuTries < 100 && workLoop) {
+		// The iGPU nub may not be published yet this early: retry.
+		gpuTimer = IOTimerEventSource::timerEventSource(this, &S0ixStandby::gpuTimerFired);
+		if (gpuTimer && workLoop->addEventSource(gpuTimer) != kIOReturnSuccess)
+			OSSafeReleaseNULL(gpuTimer);
+		if (gpuTimer) gpuTimer->setTimeoutMS(10000);
+	}
 
 	setProperty("DSM enabled", dsmEnabled);
 	{
@@ -309,6 +325,10 @@ void S0ixStandby::stop(IOService *provider)
 		liveTimer->cancelTimeout();
 		if (workLoop) workLoop->removeEventSource(liveTimer);
 	}
+	if (gpuTimer) {
+		gpuTimer->cancelTimeout();
+		if (workLoop) workLoop->removeEventSource(gpuTimer);
+	}
 	IOService::stop(provider);
 }
 
@@ -317,7 +337,11 @@ void S0ixStandby::free()
 	OSSafeReleaseNULL(publishTimer);
 	OSSafeReleaseNULL(scanTimer);
 	OSSafeReleaseNULL(liveTimer);
+	OSSafeReleaseNULL(gpuTimer);
 	OSSafeReleaseNULL(workLoop);
+	gpuMMIO = nullptr;
+	OSSafeReleaseNULL(gpuMap);
+	OSSafeReleaseNULL(gpuDev);
 	for (uint32_t i = 0; i < d3Count; i++) OSSafeReleaseNULL(d3Dev[i]);
 	d3Count = 0;
 	if (d3Lock) { IOLockFree(d3Lock); d3Lock = nullptr; }
@@ -806,6 +830,8 @@ void S0ixStandby::onSleep()
 
 	if (lastSleepType == kSleepTypeDeepIdle)
 		d3Enter();
+	if (gpuMMIO)
+		gpuSleep();
 
 	entered = false;
 	if (dsmEnabled && lastSleepType == kSleepTypeDeepIdle &&
@@ -822,6 +848,9 @@ void S0ixStandby::onWake()
 		dsmExit();
 		entered = false;
 	}
+	// Before any driver wakes: Apple's accelerator restarts the engines later.
+	if (gpuMMIO)
+		gpuWake();
 	counterAtWake = 0;
 	readCounter(counterAtWake);
 	timeAtWake = mach_absolute_time();
@@ -841,6 +870,9 @@ void S0ixStandby::onWake()
 	snap.gatingValid = gatingValid;
 	for (uint32_t i = 0; i < 8; i++) snap.gatingAtHalt[i] = gatingAtHalt[i];
 	snap.pmcHaltValid = pmcHaltValid;
+	snap.gpuAtSleep = gpuAtSleep; snap.gpuAtWake = gpuAtWake;
+	snap.gpuVerdict = gpuVerdict; snap.gpuResetResult = gpuResetResult;
+	snap.gpuResetUs = gpuResetUs; snap.gpuEnginesReady = gpuEnginesReady;
 	if (pmcHaltValid)
 		for (uint32_t i = 0; i < 1024; i++) pmcSnap[i] = pmcAtHalt[i];
 	haltValid = gatingValid = pmcHaltValid = false;   // consumed by this cycle
@@ -936,6 +968,7 @@ void S0ixStandby::publish()
 		}
 	}
 	publishBlockers();
+	publishGPU();
 
 	if (snap.pmcHaltValid) {
 		if (OSData *d = OSData::withBytes(pmcSnap, sizeof(pmcSnap))) {

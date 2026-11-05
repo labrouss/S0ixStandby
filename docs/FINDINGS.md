@@ -147,6 +147,41 @@ driver side, worth about 0.2 W (0.96 W vs Linux 0.76 W).
 `CNVW._PS3` / `HDAS._PS3` only feed the `S023` vote (`XSQD`), so running
 them would not help.
 
+## 9. WhateverXe acceleration across Deep Idle (2026-11-05)
+
+Graphics stack: WhateverXe.kext (Lilu plugin, EFI) plus the WhateverXe
+Graphics package (`AppleIntelTGLGraphics` 16.0.32, Apple's pre-release Tiger
+Lake driver from a Big Sur beta, installed under `/Library`).
+
+| Run | Result |
+|---|---|
+| WhateverXe 0.6.1, acceleration on | panic ~1 s after wake: `r113 context-ID-mismatch` (Apple's CSB validator) |
+| WhateverXe 0.7.0, acceleration on | before sleep healthy (4 engines, 0 CSB errors, `GFX_MODE` 0x8 = execlists on); **panic 6.0 s after wake**: `r113 ElementSwitch-second-item-null` from the render engine's context-switch interrupt. Black screen and no ping = the panic, not a hang |
+| `-wex-noaccel` | sleeps and wakes cleanly (all tests above) |
+
+What the driver does (disassembly of the Tahoe payload, symbols present):
+
+- Sleep: `IntelAccelerator::setPowerState(off)` → `IGStolenMemoryPool::purge`,
+  `IGInterruptBridge::systemWillSleep`, `stopGraphicsEngine`.
+- Wake: `setPowerState(on)` → `IGInterruptBridge::systemDidWake`,
+  **`startGraphicsEngine`** (the boot path: `initModeRegisters`,
+  `initHardwareStatusPageRegisters`, `initFirmware`, interrupts, default
+  context); `IGScheduler5::systemDidWake` → `resetOnWake` per engine.
+- `IGHardwareCommandStreamer5::resetOnWake` only resets the CSB read pointer
+  (to 7, a 6-entry layout). WhateverXe replaces it with a 12-entry version on
+  purpose; calling Apple's original as well would be wrong.
+- `lastHWS = ffff…` in the panics is WhateverXe's consumed-slot sentinel, not
+  a dead device.
+
+Reading: the GPU reported an element switch (port 0 done, port 1 running)
+while the driver had only one item queued. **GPU and driver queue state
+disagree after wake.** Apple's wake path assumes S3, where the GPU loses power
+and starts blank. In Deep Idle the iGPU likely keeps its power and state; Linux
+resets the GT on resume for the same reason.
+
+Test: S0ixStandby 0.3.0 `-s0ixgpuprobe` (does the GPU keep its state?) and
+`-s0ixgpureset` (full GT reset at wake, before the driver restarts the engines).
+
 ## Still to capture
 
 - A 30–60 min run of `s2idle-test.sh` for a tighter power number.

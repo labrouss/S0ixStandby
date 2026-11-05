@@ -38,7 +38,7 @@ LDFLAGS    := $(ARCH) -mkernel -nostdlib -Xlinker -kext -Xlinker -export_dynamic
               $(SDK)/Library/x86_64/libkmod.a $(KMODCXX) $(CCKEXT)
 
 OBJ        := $(BUILD)/$(CONFIG)/obj
-SRCS_CPP   := $(KEXT)/$(KEXT).cpp
+SRCS_CPP   := $(KEXT)/$(KEXT).cpp $(KEXT)/S0ixGPU.cpp
 SRCS_C     := $(KEXT)/kmod_info.c
 OBJS       := $(SRCS_CPP:$(KEXT)/%.cpp=$(OBJ)/%.o) $(SRCS_C:$(KEXT)/%.c=$(OBJ)/%.o)
 

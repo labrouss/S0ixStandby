@@ -28,6 +28,14 @@ echo "$P" | grep '"Live SLP_S0 blockers"' | sed 's/.*= (//; s/)$//; s/"//g; s/^/
 echo "Likely SLP_S0 blockers (IPs still powered at the halt):"
 echo "$P" | grep '"Last SLP_S0 blockers at halt"' | sed 's/.*= (//; s/)$//; s/"//g; s/^/  /' || true
 echo
+echo "== GPU (-s0ixgpuprobe / -s0ixgpureset)"
+if echo "$P" | grep -q '"GPU registers at wake"'; then
+  echo "$P" | grep -E '"GPU( state after sleep| reset| reset count| retained count|)"' | sed 's/^ *//; s/"//g; s/^/  /'
+  echo "$P" | grep -E '"GPU registers at (sleep|wake)"' | sed 's/^ *//; s/"//g; s/^/  /'
+else
+  echo "$P" | grep -E '"GPU"' | sed 's/^ *//; s/"//g; s/^/  /' || echo "  (off)"
+fi
+echo
 echo "== Deep Idle"
 ioreg -rd1 -c IOPMrootDomain | grep -E 'IOPMDeepIdleSupported|IOPMSystemSleepType'
 echo
