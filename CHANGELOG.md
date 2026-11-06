@@ -7,7 +7,7 @@
   microcontroller firmware is loaded: first program word, SSP base, HTP),
   `Display power now` (60 s after setup and after each wake),
   `Display power at sleep` / `at wake` (`DC_STATE_EN`, DC3→DC5, DC5→DC6 and
-  DC3CO counters, power well control). Same registers as Linux's
+  DC3CO counters, power well control, `SOUTH_CHICKEN1`). Same registers as Linux's
   `i915_dmc_info`. Linux bisection showed that without i915 the SLP_S0
   counter stays at 0, as on macOS (FINDINGS §11). Nothing is written.
 - `macos/s0ix-status.sh`: new Display section.

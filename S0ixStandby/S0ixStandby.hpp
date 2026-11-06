@@ -44,7 +44,7 @@ public:
 		uint32_t reg[kGpuRegCount];
 	};
 	// Display power state (read-only): DMC firmware and DC5/DC6 counters.
-	enum { kDispRegCount = 9 };
+	enum { kDispRegCount = 10 };
 	struct DispState {
 		bool valid;
 		uint8_t why;                         // 1 not D0, 2 decode off

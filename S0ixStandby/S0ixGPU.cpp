@@ -444,7 +444,7 @@ void S0ixStandby::publishGPU()
 // whether the display ever reaches DC5/DC6. Same registers as Linux's
 // i915_dmc_info. Nothing is written.
 
-enum { kDispProg, kDispSsp, kDispHtp, kDispDcEn, kDispDc5, kDispDc6, kDispDc3co, kDispPw1, kDispPw2 };
+enum { kDispProg, kDispSsp, kDispHtp, kDispDcEn, kDispDc5, kDispDc6, kDispDc3co, kDispPw1, kDispPw2, kDispSchick1 };
 
 void S0ixStandby::dispCapture(DispState &d, const DispState *ref)
 {
@@ -475,6 +475,7 @@ void S0ixStandby::dispCapture(DispState &d, const DispState *ref)
 		dispTgl ? 0x101090u : 0u,                  // DC3CO count (Gen12)
 		0x45400,                                   // HSW_PWR_WELL_CTL1 (BIOS)
 		0x45404,                                   // HSW_PWR_WELL_CTL2 (driver)
+		0xC2000,                                   // SOUTH_CHICKEN1 (bit 7 SBCLK_RUN_REFCLK_DIS)
 	};
 	for (uint32_t i = 0; i < kDispRegCount; i++)
 		d.reg[i] = off[i] ? gpuRead(off[i]) : 0;
@@ -489,9 +490,10 @@ void S0ixStandby::dispFormat(const DispState &d, char *out, size_t size)
 		return;
 	}
 	uint32_t dc = d.reg[kDispDcEn];
-	snprintf(out, size, "DC_STATE_EN 0x%08x (%s), DC3->DC5 %u, DC5->DC6 %u, DC3CO %u, PWR_WELL_CTL1 0x%08x, CTL2 0x%08x",
+	snprintf(out, size, "DC_STATE_EN 0x%08x (%s%s), DC3->DC5 %u, DC5->DC6 %u, DC3CO %u, PWR_WELL_CTL1 0x%08x, CTL2 0x%08x, SOUTH_CHICKEN1 0x%08x",
 	         dc, (dc & 3) == 2 ? "DC6 allowed" : (dc & 3) == 1 ? "DC5 allowed" : "DC5/DC6 off",
-	         d.reg[kDispDc5], d.reg[kDispDc6], d.reg[kDispDc3co], d.reg[kDispPw1], d.reg[kDispPw2]);
+	         (dc & 8) ? ", DC9" : "",
+	         d.reg[kDispDc5], d.reg[kDispDc6], d.reg[kDispDc3co], d.reg[kDispPw1], d.reg[kDispPw2], d.reg[kDispSchick1]);
 }
 
 void S0ixStandby::publishDisplay()
@@ -499,7 +501,7 @@ void S0ixStandby::publishDisplay()
 	if (!gpuMMIO) return;
 	DispState now;
 	dispCapture(now, nullptr);
-	char buf[256];
+	char buf[320];
 	if (now.valid) {
 		bool loaded = now.reg[kDispProg] != 0 && now.reg[kDispProg] != 0xFFFFFFFF;
 		snprintf(buf, sizeof(buf), "%s: program 0x%08x, ssp base 0x%08x, htp 0x%08x",

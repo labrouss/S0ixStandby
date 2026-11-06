@@ -285,9 +285,25 @@ Linux reference with i915 (`i915_dmc_info`, normal boot): DMC `tgl_dmc_ver2_12.b
 2.12 loaded (main and pipe A), program base 0x0c004040, ssp base 0x00086fc0,
 htp 0x01a40188, DC3→DC5 95, DC5→DC6 793, DC3CO 0.
 
-0.4.3 reads the same display registers on macOS (`Display DMC firmware`,
-`Display power now/at sleep/at wake`). Next: `i915.enable_dc=0` on Linux, to
-tell whether the display DC states or the GT side sets the block.
+`i915.enable_dc=0` (DMC still loaded): the block reads 0 and DC3→DC5 /
+DC5→DC6 stay 0, so **the block records the display reaching DC5/DC6 while
+awake**. Yet the SLP_S0 counter still rose across a suspend (0 → 0x121A9D):
+**DC5/DC6 at runtime is not required for S0ix; what i915 does on suspend is.**
+On s2idle, display version 11+, i915 (mainline `intel_display_power.c`,
+`intel_display_power_suspend_late`) does:
+
+1. `icl_display_core_uninit`: DC states off, DMC program disabled, DBUF off,
+   CDCLK off, power well 1 off, combo PHY uninit (skipped only when DC9 is
+   not allowed and the DMC stays in charge).
+2. `bxt_enable_dc9`: `DC_STATE_EN` (0x45504) bit 3.
+3. Wa_14010685332 (cnp/icp/jsp/mcc/tgp/adp PCH): `SOUTH_CHICKEN1` (0xC2000)
+   bit 7 `SBCLK_RUN_REFCLK_DIS`.
+
+Resume undoes them in reverse. Apple's framebuffer was written for Macs that
+use S3, where the platform powers the display off. Under Deep Idle on this
+machine it most likely leaves the display core up, without DC9 and without
+the PCH workaround: that would match "no i915 = no SLP_S0". 0.4.3 reads
+`DC_STATE_EN` and `SOUTH_CHICKEN1` at the sleep action to check it.
 
 ## Still to capture
 
