@@ -43,6 +43,14 @@ public:
 		uint32_t bar0, bar1;                 // PCI BAR0 (GTTMMADR) low/high
 		uint32_t reg[kGpuRegCount];
 	};
+	// Display power state (read-only): DMC firmware and DC5/DC6 counters.
+	enum { kDispRegCount = 9 };
+	struct DispState {
+		bool valid;
+		uint8_t why;                         // 1 not D0, 2 decode off
+		uint32_t bar0, bar1;
+		uint32_t reg[kDispRegCount];
+	};
 
 private:
 	// LPS0 _DSM GUID families (index into mask/guid tables)
@@ -154,6 +162,7 @@ private:
 		GpuState gpuAtSleep, gpuAtWake;
 		uint32_t gpuVerdict, gpuResetResult, gpuResetUs, gpuEnginesReady;
 		uint16_t wifiPmcsrSleep, wifiPmcsrWake;
+		DispState dispAtSleep, dispAtWake;
 	};
 	Snapshot snap {};
 	uint32_t pmcSnap[1024] {}, pmcSnapActive[1024] {};
@@ -187,6 +196,11 @@ private:
 	void gpuResetNow();
 	void gpuFormat(const GpuState &s, char *out, size_t size);
 	void publishGPU();
+	DispState dispAtSleep {}, dispAtWake {};
+	bool dispTgl {false};                    // Gen12 (TGL+) DMC debug counter layout
+	void dispCapture(DispState &d, const DispState *ref);
+	void dispFormat(const DispState &d, char *out, size_t size);
+	void publishDisplay();
 	void recordGPU();
 	void cleanNvram();
 

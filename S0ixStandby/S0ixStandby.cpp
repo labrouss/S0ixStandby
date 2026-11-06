@@ -903,8 +903,10 @@ void S0ixStandby::onSleep()
 
 	if (lastSleepType == kSleepTypeDeepIdle)
 		d3Enter();
-	if (gpuMMIO)
+	if (gpuMMIO) {
 		gpuSleep();
+		dispCapture(dispAtSleep, nullptr);
+	}
 	// Drivers (and IOPCIFamily's D3 transition) are done by now.
 	wifiPmcsrSleep = wifiDev ? wifiDev->configRead16(wifiPmCap + 4) : 0xFFFF;
 
@@ -924,8 +926,10 @@ void S0ixStandby::onWake()
 		entered = false;
 	}
 	// Before any driver wakes: Apple's accelerator restarts the engines later.
-	if (gpuMMIO)
+	if (gpuMMIO) {
+		dispCapture(dispAtWake, &dispAtSleep);
 		gpuWake();
+	}
 	wifiPmcsrWake = wifiDev ? wifiDev->configRead16(wifiPmCap + 4) : 0xFFFF;
 	counterAtWake = 0;
 	readCounter(counterAtWake);
@@ -953,6 +957,7 @@ void S0ixStandby::onWake()
 	snap.gpuVerdict = gpuVerdict; snap.gpuResetResult = gpuResetResult;
 	snap.gpuResetUs = gpuResetUs; snap.gpuEnginesReady = gpuEnginesReady;
 	snap.wifiPmcsrSleep = wifiPmcsrSleep; snap.wifiPmcsrWake = wifiPmcsrWake;
+	snap.dispAtSleep = dispAtSleep; snap.dispAtWake = dispAtWake;
 	if (pmcHaltValid)
 		for (uint32_t i = 0; i < 1024; i++) pmcSnap[i] = pmcAtHalt[i];
 	haltValid = gatingValid = pmcHaltValid = pmcActiveValid = false;   // consumed by this cycle
@@ -1049,6 +1054,7 @@ void S0ixStandby::publish()
 	}
 	publishBlockers();
 	publishGPU();
+	publishDisplay();
 	if (wifiDev) {
 		char w[96];
 		snprintf(w, sizeof(w), "at sleep action D%u (0x%04x), at wake action D%u (0x%04x)",

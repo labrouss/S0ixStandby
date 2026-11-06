@@ -36,6 +36,9 @@ else
   echo "$P" | grep -E '"GPU"' | sed 's/^ *//; s/"//g; s/^/  /' || echo "  (off)"
 fi
 echo
+echo "== Display power (DMC / DC states)"
+echo "$P" | grep -E '"Display (DMC firmware|power now|power at sleep|power at wake)"' | sed 's/^ *//; s/"//g; s/^/  /' || echo "  (not reported: needs 0.4.3)"
+echo
 echo "== Deep Idle"
 ioreg -rd1 -c IOPMrootDomain | grep -E 'IOPMDeepIdleSupported|IOPMSystemSleepType'
 echo

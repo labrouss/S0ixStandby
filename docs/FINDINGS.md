@@ -254,6 +254,41 @@ to read the latched set. Open: Bluetooth (same CNVi; a connected BT device staye
 connected through sleep, and CNVI stayed powered even without the Wi-Fi/BT
 kexts), so the test is Wi-Fi D3 alone, then with Bluetooth off.
 
+## 11. The iGPU display handshake is what unlocks SLP_S0 (2026-11-06)
+
+Full 32-bit Linux and macOS PMC page dumps (`PWRM+0x1000`) differ in one
+block of settings that never changes on Linux: `PWRM+0x1CAC` = 0x9 (same mask
+as `LPM_EN`), `0x1CB0` = 0xFF, `0x1CB4` = 0xFF (0x1CB8 = 0x80 only with
+`intel_pmc_core` loaded). macOS: all 0, at kext start and before the halt.
+Neither Linux's PMC driver (mainline `drivers/platform/x86/intel/pmc`) nor
+the ACPI tables name or write these offsets, and the CPU cannot write them
+(an OpenShell `mm` write reads back 0): the PMC sets them itself.
+
+Linux bisection (read with `/dev/mem`):
+
+| Linux boot | 0x1CAC / 0x1CB0 / 0x1CB4 | SLP_S0 counter across a suspend |
+|---|---|---|
+| OpenShell, before any OS | 0 / 0 / 0 | – |
+| `break=top` (initramfs, before drivers) | 0 / 0 / 0 | – |
+| normal | 9 / FF / FF | rises |
+| `module_blacklist=intel_pmc_core` | 9 / FF / FF | rises (0x2E417 → 0x79100) |
+| `module_blacklist=i915,mei_me,snd_sof_pci_intel_tgl,snd_hda_intel,intel_vsec,thunderbolt` | 0 / 0 / 0 | – |
+| `module_blacklist=i915` | **0 / 0 / 0** | **stays 0** |
+| macOS (XOSI on, `PEPD._STA` = 15) | 0 / 0 / 0 | stays 0 |
+
+**Linux without i915 behaves exactly like macOS: no SLP_S0 at all.** The
+remaining S0ix blocker on this machine is what the graphics driver does for
+the display/GT power handshake, not Wi-Fi, Bluetooth, CNVi or ISH. OSYS is
+ruled out (XOSI answers up to Windows 2021, PEPD present).
+
+Linux reference with i915 (`i915_dmc_info`, normal boot): DMC `tgl_dmc_ver2_12.bin`
+2.12 loaded (main and pipe A), program base 0x0c004040, ssp base 0x00086fc0,
+htp 0x01a40188, DC3→DC5 95, DC5→DC6 793, DC3CO 0.
+
+0.4.3 reads the same display registers on macOS (`Display DMC firmware`,
+`Display power now/at sleep/at wake`). Next: `i915.enable_dc=0` on Linux, to
+tell whether the display DC states or the GT side sets the block.
+
 ## Still to capture
 
 - A 30–60 min run of `s2idle-test.sh` for a tighter power number.

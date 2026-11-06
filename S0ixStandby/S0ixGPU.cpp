@@ -171,9 +171,14 @@ void S0ixStandby::gpuRestoreDecode(const GpuState &s)
 
 void S0ixStandby::gpuTimerFired(OSObject *owner, IOTimerEventSource *)
 {
-	if (S0ixStandby *self = OSDynamicCast(S0ixStandby, owner))
-		if (!self->gpuMMIO && self->setupGPU() == false && self->gpuTries < 6)
-			self->gpuTimer->setTimeoutMS(10000);
+	S0ixStandby *self = OSDynamicCast(S0ixStandby, owner);
+	if (!self) return;
+	if (self->gpuMMIO) {                      // 60 s after setup: display state while awake
+		self->publishDisplay();
+		return;
+	}
+	if (self->setupGPU()) self->gpuTimer->setTimeoutMS(60000);
+	else if (self->gpuTries < 6) self->gpuTimer->setTimeoutMS(10000);
 }
 
 bool S0ixStandby::setupGPU()
@@ -217,6 +222,7 @@ bool S0ixStandby::setupGPU()
 	found->findPCICapability(kIOPCIPowerManagementCapability, &pm);
 
 	cleanNvram();
+	dispTgl = cpuModel != 0x7D && cpuModel != 0x7E;   // Ice Lake keeps the Gen9 counter layout
 	gpuDev = found;
 	gpuMap = map;
 	gpuPmCap = pm;
@@ -428,4 +434,87 @@ void S0ixStandby::publishGPU()
 	if (gpuProbe) recordGPU();
 	LOG("wake #%u: GPU %s%s%s", snap.sleepCount, kVerdictName[snap.gpuVerdict < kVerdictCount ? snap.gpuVerdict : 0],
 	    gpuReset ? ", reset " : "", gpuReset ? kResetName[snap.gpuResetResult < kResetCount ? snap.gpuResetResult : 0] : "");
+}
+
+// --- Display power state (read-only) ------------------------------------------
+// S0ix needs the display in DC6, which the display microcontroller (DMC)
+// firmware enters on behalf of the driver. On Linux, booting without i915
+// leaves the PMC's display handshake unset and the SLP_S0 counter at 0.
+// These reads show whether macOS's framebuffer loaded the DMC firmware and
+// whether the display ever reaches DC5/DC6. Same registers as Linux's
+// i915_dmc_info. Nothing is written.
+
+enum { kDispProg, kDispSsp, kDispHtp, kDispDcEn, kDispDc5, kDispDc6, kDispDc3co, kDispPw1, kDispPw2 };
+
+void S0ixStandby::dispCapture(DispState &d, const DispState *ref)
+{
+	d = DispState {};
+	if (!gpuMMIO || !gpuDev) return;
+	uint16_t cmd = gpuDev->configRead16(kIOPCIConfigCommand);
+	uint16_t pmcsr = gpuPmCap ? gpuDev->configRead16(gpuPmCap + kPmcsrOff) : 0;
+	d.bar0 = gpuDev->configRead32(kIOPCIConfigBaseAddress0);
+	d.bar1 = gpuDev->configRead32(kIOPCIConfigBaseAddress1);
+	if ((pmcsr & 3) != 0) { d.why = 1; return; }
+	bool enabled = false;
+	if (!(cmd & kIOPCICommandMemorySpace)) {
+		// Same rule as the GT probe: only with config space unchanged since sleep.
+		if (!ref || !ref->valid || (d.bar0 & ~0xFu) == 0 || d.bar0 != ref->bar0 || d.bar1 != ref->bar1) {
+			d.why = 2;
+			return;
+		}
+		gpuDev->configWrite16(kIOPCIConfigCommand, (UInt16)(cmd | kIOPCICommandMemorySpace));
+		enabled = true;
+	}
+	const uint32_t off[kDispRegCount] = {
+		0x80000,                                   // DMC_PROGRAM(0): first firmware word
+		0x8F074,                                   // DMC_SSP_BASE
+		0x8F004,                                   // DMC_HTP_SKL
+		0x45504,                                   // DC_STATE_EN
+		dispTgl ? 0x101084u : 0x80030u,            // DC3 -> DC5 count
+		dispTgl ? 0x101088u : 0x8002Cu,            // DC5 -> DC6 count
+		dispTgl ? 0x101090u : 0u,                  // DC3CO count (Gen12)
+		0x45400,                                   // HSW_PWR_WELL_CTL1 (BIOS)
+		0x45404,                                   // HSW_PWR_WELL_CTL2 (driver)
+	};
+	for (uint32_t i = 0; i < kDispRegCount; i++)
+		d.reg[i] = off[i] ? gpuRead(off[i]) : 0;
+	if (enabled) gpuDev->configWrite16(kIOPCIConfigCommand, cmd);
+	d.valid = true;
+}
+
+void S0ixStandby::dispFormat(const DispState &d, char *out, size_t size)
+{
+	if (!d.valid) {
+		snprintf(out, size, "not read (%s)", d.why == 1 ? "iGPU not in D0" : d.why == 2 ? "memory decode off" : "no iGPU");
+		return;
+	}
+	uint32_t dc = d.reg[kDispDcEn];
+	snprintf(out, size, "DC_STATE_EN 0x%08x (%s), DC3->DC5 %u, DC5->DC6 %u, DC3CO %u, PWR_WELL_CTL1 0x%08x, CTL2 0x%08x",
+	         dc, (dc & 3) == 2 ? "DC6 allowed" : (dc & 3) == 1 ? "DC5 allowed" : "DC5/DC6 off",
+	         d.reg[kDispDc5], d.reg[kDispDc6], d.reg[kDispDc3co], d.reg[kDispPw1], d.reg[kDispPw2]);
+}
+
+void S0ixStandby::publishDisplay()
+{
+	if (!gpuMMIO) return;
+	DispState now;
+	dispCapture(now, nullptr);
+	char buf[256];
+	if (now.valid) {
+		bool loaded = now.reg[kDispProg] != 0 && now.reg[kDispProg] != 0xFFFFFFFF;
+		snprintf(buf, sizeof(buf), "%s: program 0x%08x, ssp base 0x%08x, htp 0x%08x",
+		         loaded ? "loaded" : "not loaded", now.reg[kDispProg], now.reg[kDispSsp], now.reg[kDispHtp]);
+		setProperty("Display DMC firmware", buf);
+	}
+	dispFormat(now, buf, sizeof(buf));
+	setProperty("Display power now", buf);
+	if (snap.sleepCount) {
+		dispFormat(snap.dispAtSleep, buf, sizeof(buf));
+		setProperty("Display power at sleep", buf);
+		dispFormat(snap.dispAtWake, buf, sizeof(buf));
+		setProperty("Display power at wake", buf);
+		if (snap.dispAtSleep.valid && snap.dispAtWake.valid)
+			LOG("wake #%u: display DC5->DC6 +%u during sleep", snap.sleepCount,
+			    snap.dispAtWake.reg[kDispDc6] - snap.dispAtSleep.reg[kDispDc6]);
+	}
 }
