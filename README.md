@@ -72,6 +72,7 @@ XCPM stops at core C6 in Deep Idle; with Ice Lake it reaches C10
 | `-s0ixdbg` | verbose log |
 | `-s0ixnogpureset` | never reset the iGPU at wake |
 | `-s0ixwifipm` | experimental: Wi-Fi PCI function to D3 for sleep through IOPCIFamily (CNVi blocker work) |
+| `-s0ixrefclk` | experimental: at a Deep Idle sleep, with the display core already down (DC9), set the PCH display reference clock workaround i915 applies on suspend (`SOUTH_CHICKEN1` bit 7); cleared at wake |
 | `-s0ixgpuprobe` | debugging: also probe an idle iGPU and keep the last result in NVRAM (`nvram s0ix-gpu-last`) |
 | `-s0ixnodsm` | measure only, never call `_DSM` |
 | `s0ixfn=<mask>` | only call the listed `_DSM` functions (debugging) |

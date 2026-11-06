@@ -201,6 +201,13 @@ private:
 	void dispCapture(DispState &d, const DispState *ref);
 	void dispFormat(const DispState &d, char *out, size_t size);
 	void publishDisplay();
+	// -s0ixrefclk: i915's Wa_14010685332 (SOUTH_CHICKEN1 bit 7) for Deep Idle
+	bool refclkWA {false};
+	uint8_t refclkResult {0};                // 0 off, 1 set+cleared, 2 skipped (display up), 3 not accessible, 4 not a Deep Idle sleep
+	bool refclkSet {false};
+	uint32_t refclkCount {0}, refclkReadback {0};
+	void refclkSleep();
+	void refclkWake();
 	void recordGPU();
 	void cleanNvram();
 

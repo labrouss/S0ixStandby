@@ -301,9 +301,22 @@ On s2idle, display version 11+, i915 (mainline `intel_display_power.c`,
 
 Resume undoes them in reverse. Apple's framebuffer was written for Macs that
 use S3, where the platform powers the display off. Under Deep Idle on this
-machine it most likely leaves the display core up, without DC9 and without
-the PCH workaround: that would match "no i915 = no SLP_S0". 0.4.3 reads
-`DC_STATE_EN` and `SOUTH_CHICKEN1` at the sleep action to check it.
+machine it might leave the display core up. 0.4.3 on macOS (one Deep Idle
+sleep, acceleration on):
+
+| | awake | at the sleep / wake action |
+|---|---|---|
+| `DC_STATE_EN` | 0 (DC5/DC6 never allowed) | **0x8: DC9** |
+| `PWR_WELL_CTL1` / `CTL2` | 0x3 / 0x3 | **0 / 0** |
+| DC3→DC5, DC5→DC6 | 0, 0 | 0, 0 |
+| `SOUTH_CHICKEN1` | 0x901 | **0x901: bit 7 clear** |
+| DMC | loaded, but program 0x0b004040, ssp 0x6fc0, htp 0x00a40088 (Linux 2.12: 0x0c004040, 0x86fc0, 0x01a40188) | |
+
+Apple's framebuffer does steps 1 and 2 (display core down, DC9); the one
+i915 suspend step missing is the PCH reference clock workaround (step 3).
+0.4.4 `-s0ixrefclk` sets it at the Deep Idle sleep action, only in that state,
+and clears it at the wake action. Still SLP_S0 0 in this run, CNVI listed at
+the halt.
 
 ## Still to capture
 

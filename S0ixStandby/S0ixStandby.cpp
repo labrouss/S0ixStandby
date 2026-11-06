@@ -212,6 +212,7 @@ bool S0ixStandby::start(IOService *provider)
 	gpuProbe = bootArg("-s0ixgpuprobe");
 	gpuReset = !bootArg("-s0ixnogpureset");
 	wifiPM = bootArg("-s0ixwifipm");
+	refclkWA = bootArg("-s0ixrefclk");
 	uint32_t fn = 0;
 	if (PE_parse_boot_argn("s0ixfn", &fn, sizeof(fn)))
 		fnAllow = fn;
@@ -906,6 +907,7 @@ void S0ixStandby::onSleep()
 	if (gpuMMIO) {
 		gpuSleep();
 		dispCapture(dispAtSleep, nullptr);
+		if (refclkWA) refclkSleep();
 	}
 	// Drivers (and IOPCIFamily's D3 transition) are done by now.
 	wifiPmcsrSleep = wifiDev ? wifiDev->configRead16(wifiPmCap + 4) : 0xFFFF;
@@ -928,6 +930,7 @@ void S0ixStandby::onWake()
 	// Before any driver wakes: Apple's accelerator restarts the engines later.
 	if (gpuMMIO) {
 		dispCapture(dispAtWake, &dispAtSleep);
+		if (refclkWA) refclkWake();
 		gpuWake();
 	}
 	wifiPmcsrWake = wifiDev ? wifiDev->configRead16(wifiPmCap + 4) : 0xFFFF;

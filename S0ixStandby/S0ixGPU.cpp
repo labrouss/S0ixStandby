@@ -496,6 +496,50 @@ void S0ixStandby::dispFormat(const DispState &d, char *out, size_t size)
 	         d.reg[kDispDc5], d.reg[kDispDc6], d.reg[kDispDc3co], d.reg[kDispPw1], d.reg[kDispPw2], d.reg[kDispSchick1]);
 }
 
+// -s0ixrefclk (experiment): i915 sets SOUTH_CHICKEN1 bit 7 (SBCLK_RUN_REFCLK_DIS,
+// "Tweaked Wa_14010685332" for cnp/icp/jsp/mcc/tgp/adp PCHs) after DC9 in
+// intel_display_power_suspend_late and clears it in resume_early. Apple's
+// framebuffer already powers the display core down and enables DC9 for Deep
+// Idle (power wells 0, DC_STATE_EN bit 3 at the sleep action) but leaves this
+// bit clear. Set it only in that state; clear it at the wake action before
+// any driver wakes.
+static const uint32_t kSouthChicken1 = 0xC2000, kSbclkRunRefclkDis = 1u << 7;
+
+void S0ixStandby::refclkSleep()
+{
+	refclkSet = false;
+	refclkResult = 0;
+	if (lastSleepType != kSleepTypeDeepIdleGpu) { refclkResult = 4; return; }
+	const DispState &d = dispAtSleep;
+	if (!d.valid) { refclkResult = 3; return; }
+	if (!(d.reg[kDispDcEn] & 8) || d.reg[kDispPw1] != 0 || d.reg[kDispPw2] != 0) { refclkResult = 2; return; }
+	uint32_t v = gpuRead(kSouthChicken1);
+	if (v == 0xFFFFFFFF) { refclkResult = 3; return; }
+	if (!(v & kSbclkRunRefclkDis)) {
+		gpuWrite(kSouthChicken1, v | kSbclkRunRefclkDis);
+		refclkSet = true;
+	}
+	refclkReadback = gpuRead(kSouthChicken1);
+	refclkResult = 1;
+}
+
+void S0ixStandby::refclkWake()
+{
+	if (!refclkSet) return;
+	refclkSet = false;
+	if (!dispAtWake.valid) { refclkResult = 3; return; }   // decode off and config changed: leave it
+	uint16_t cmd = gpuDev->configRead16(kIOPCIConfigCommand);
+	bool enabled = false;
+	if (!(cmd & kIOPCICommandMemorySpace)) {
+		gpuDev->configWrite16(kIOPCIConfigCommand, (UInt16)(cmd | kIOPCICommandMemorySpace));
+		enabled = true;
+	}
+	uint32_t v = gpuRead(kSouthChicken1);
+	if (v != 0xFFFFFFFF) gpuWrite(kSouthChicken1, v & ~kSbclkRunRefclkDis);
+	if (enabled) gpuDev->configWrite16(kIOPCIConfigCommand, cmd);
+	refclkCount++;
+}
+
 void S0ixStandby::publishDisplay()
 {
 	if (!gpuMMIO) return;
@@ -510,6 +554,16 @@ void S0ixStandby::publishDisplay()
 	}
 	dispFormat(now, buf, sizeof(buf));
 	setProperty("Display power now", buf);
+	if (refclkWA) {
+		static const char *const kRefclkName[] = {
+			"waiting for a sleep", "set at sleep, cleared at wake",
+			"skipped: display core still up at sleep (no DC9 / power wells on)",
+			"skipped: iGPU registers not accessible", "skipped: not a Deep Idle sleep",
+		};
+		snprintf(buf, sizeof(buf), "%s (SOUTH_CHICKEN1 after write 0x%08x, %u sleeps)",
+		         kRefclkName[refclkResult < 5 ? refclkResult : 0], refclkReadback, refclkCount);
+		setProperty("Display refclk workaround", buf);
+	}
 	if (snap.sleepCount) {
 		dispFormat(snap.dispAtSleep, buf, sizeof(buf));
 		setProperty("Display power at sleep", buf);

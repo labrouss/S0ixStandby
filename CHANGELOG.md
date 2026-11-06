@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.4 (unreleased): PCH display refclk workaround (experiment)
+
+- `-s0ixrefclk` (experimental, off by default): at a Deep Idle sleep
+  action, if Apple's framebuffer has already powered the display core down
+  (`DC_STATE_EN` DC9, power wells 1/2 off), sets `SOUTH_CHICKEN1` bit 7
+  (`SBCLK_RUN_REFCLK_DIS`), the "Tweaked Wa_14010685332" i915 applies after
+  DC9 on suspend (cnp/icp/jsp/mcc/tgp/adp PCH); cleared at the wake action
+  before any driver wakes. Linux reaches S0ix only with i915 loaded, and the
+  0.4.3 probe showed this bit as the one i915 suspend step macOS skips
+  (FINDINGS §11). Reported: `Display refclk workaround`.
+
 ## 0.4.3 (unreleased): display power probe
 
 - Read-only display power report for Intel Gen11/12 iGPUs, whenever the GPU
