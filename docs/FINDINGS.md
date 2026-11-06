@@ -315,8 +315,44 @@ sleep, acceleration on):
 Apple's framebuffer does steps 1 and 2 (display core down, DC9); the one
 i915 suspend step missing is the PCH reference clock workaround (step 3).
 0.4.4 `-s0ixrefclk` sets it at the Deep Idle sleep action, only in that state,
-and clears it at the wake action. Still SLP_S0 0 in this run, CNVI listed at
-the halt.
+and clears it at the wake action.
+
+**0.4.4 `-s0ixrefclk` result:** the bit is set for the whole sleep (0x901 →
+0x981) and the PMC display block reads 9/FF/FF/80 at the halt, as on Linux,
+**but SLP_S0 stays 0**. Every i915-dependent PMC bit now matches Linux at the
+halt (0x1CAC block, 0x1424 bit 7, 0x10B4 bit 0, 0x1D80 bits 9/12).
+
+**Correction: no i915 is not the Mac's failure.** Linux with
+`module_blacklist=i915` never gets past package **C2** (`package_cstate_show`:
+C10 0 before and after a suspend): without its driver the GT never idles.
+The Mac reaches PC10 for 99 % of the halt. The display work stays useful (it
+proves macOS's display shutdown matches i915's) but does not explain the
+missing SLP_S0.
+
+**LPM requirements.** The firmware's requirement table (`PEPD._DSM`
+57a6512e fn 1 returns the 0xC0 bytes at GNVS `LPMR`, here 0x41EA3000; Linux's
+`substate_requirements` was empty) gives per mode 6 masks. Linux always
+enters **S0i3.0 (mode 3)**: `f7fe027e e87c01ef 0000112d 00000000 383fe8c5`.
+`ISH_REQ` is required and 1 on Linux in S0i3.0, so 1 = met. `SBR_PG` is not
+required. Against the ISH-blacklisted Linux latch (S0ix reached), every
+required bit the Mac differs on is Mac 1 / Linux 0: **the Mac meets all
+S0i3.0 requirements at C10 entry.**
+
+**Thunderbolt 4 (TCSS).** Linux reaches S0ix with `thunderbolt` blacklisted,
+with D3cold forbidden on 00:07.0/07.1/0d.0/0d.2, and with the NHI in D0.
+With the root ports and the TB4 xHCI unbound (D0 through suspend) SLP_S0
+stays 0, but the package stops at **PC9** (PC10 unchanged): not the Mac's
+state, so TB4 is not the Mac's blocker.
+
+**Remaining differences** at the halt (not named by Linux or ACPI): 0x1A00
+(0x6178D → 0x160D during the Mac's sleep, constant on Linux), 0x1D80 bit 3,
+0x1424, 0x1434, 0x1BC4. With `s0ixfn=0x18` (no LPS0 entry/exit) they change
+the same way: **macOS's own sleep path changes them, not S0ixStandby's
+`_DSM` calls.** Linux's values during s2idle cannot be read, so they may be
+normal sleep-time values.
+
+**Perspective:** Linux S0ix 0.76 W; macOS Deep Idle without SLP_S0
+≈ 0.5–1.0 W. The missing SLP_S0 is now worth at most a few tenths of a watt.
 
 ## Still to capture
 
