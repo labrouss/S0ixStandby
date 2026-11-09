@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.1 (unreleased): no RTC dark wakes on AC (experiment)
+
+- `-s0ixacnortc` (experimental, off by default): while on AC, a Deep Idle
+  sleep can't be woken by the RTC alarm, so macOS's every-5-minute
+  maintenance dark wakes on AC (battery management) don't happen; the power
+  button, lid and other wake sources are unaffected. At the Deep Idle sleep
+  action the RTC alarm interrupt enable (CMOS register B, AIE) and the ACPI
+  fixed event `RTC_EN` (PM1_EN bit 10; PM1a event block from the FADT) are
+  cleared, `RTC_EN` once more at the quiesce action, and both are restored
+  first thing at the wake action (a stale alarm flag is dropped). AC state
+  comes from `IOPMPowerSource` `ExternalConnected`, cached every 10 s.
+  Battery sleep is unchanged. Works around the AC freeze in FINDINGS §12.
+  Reported: `AC RTC wake block`, `AC RTC wake blocks`, `On AC (last check)`.
+- Fixed: three stray releases in `start()` (of `liveTimer`, `wifiTimer` and
+  `wifiDev`) that belonged in `free()`; `wifiTimer` could be released while
+  still on the work loop when the iGPU was not yet published at start.
+  `free()` now releases `wifiTimer` and `wifiDev`.
+
 ## 0.5.0 (2026-11-09)
 
 Consolidates 0.4.3–0.4.4 and adds platform guards from the first outside

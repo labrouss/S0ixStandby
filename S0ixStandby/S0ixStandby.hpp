@@ -224,6 +224,16 @@ private:
 	static void wifiTimerFired(OSObject *owner, IOTimerEventSource *sender);
 	bool setupWifiPM();
 
+	// -s0ixacnortc: no RTC alarm wakes from Deep Idle while on AC
+	bool acNoRtc {false}, onAC {false}, rtcBlocked {false};
+	uint16_t pm1EnPort {0}, pm1EnSaved {0};
+	uint8_t cmosBSaved {0};
+	uint32_t rtcBlockCount {0};
+	IOTimerEventSource *acTimer {nullptr};
+	bool setupRtcBlock();
+	void updateAC();
+	static void acTimerFired(OSObject *owner, IOTimerEventSource *sender);
+
 	void onSleep();
 	void onWake();
 	void publish();

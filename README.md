@@ -8,7 +8,7 @@ sleeps in **Deep Idle** (the S0 sleep built into XNU) with the Modern Standby
 
 [![build](https://github.com/labrouss/S0ixStandby/actions/workflows/build.yml/badge.svg)](https://github.com/labrouss/S0ixStandby/actions/workflows/build.yml)
 
-**Status: pre-release 0.5.0.** Generic: any Intel laptop with an ACPI LPS0
+**Status: pre-release 0.5.1.** Generic: any Intel laptop with an ACPI LPS0
 device (`PNP0D80`); **not AMD** (see [Platform support](#platform-support)). Built and released by GitHub Actions only. First test machine:
 HP EliteBook 840 G8 (Tiger Lake), macOS Tahoe 26.7.1, OpenCore 1.0.8.
 **Testers with other laptops wanted**, see [Testing](#testing-wanted).
@@ -28,7 +28,7 @@ HP EliteBook 840 G8 (Tiger Lake), macOS Tahoe 26.7.1, OpenCore 1.0.8.
 | | |
 |---|---|
 | Real S0ix (SLP_S0) | Not asserted, although package C10 is reached and every PMC requirement Linux needs is met at the halt (display, CNVi, ISH, Thunderbolt all ruled out, [FINDINGS §11](docs/FINDINGS.md)). Power is already in Linux's S0ix range, so the gain left is a few tenths of a watt |
-| **Freeze on AC** (`GFX0(): Some drivers failed to handle setPowerState`) | On **AC power** macOS's battery management dark-wakes the machine every ~5 min; after 3–9 cycles the re-sleep freezes hard (LED steady). Reproduced **with S0ixStandby disabled** and with acceleration off: it is Deep Idle + Apple's TGL framebuffer on this laptop ([FINDINGS §12](docs/FINDINGS.md)), reported to WhateverXe. **Workaround: sleep on battery** (11.5 h night with 26 dark wakes clean) |
+| **Freeze on AC** (`GFX0(): Some drivers failed to handle setPowerState`) | On **AC power** macOS's battery management dark-wakes the machine every ~5 min; after 3–9 cycles the re-sleep freezes hard (LED steady). Reproduced **with S0ixStandby disabled** and with acceleration off: it is Deep Idle + Apple's TGL framebuffer on this laptop ([FINDINGS §12](docs/FINDINGS.md)), reported to WhateverXe. **Workaround: sleep on battery** (11.5 h night with 26 dark wakes clean), or try `-s0ixacnortc` (0.5.1) |
 | GPU hangs with hardware video (WhateverXe, TGL) | YouTube/Photo Booth decode hangs the GPU every ~10 s (`GPURestartSignaled`, CCS ring). Removing `AppleIntelTGLGraphicsVADriver.bundle` stops it (software decode, Metal stays). Not related to S0ixStandby |
 | Rare dark display after wake | Seen twice, not reproducible with the same settings; please report with `macos/wake-report.sh` |
 | Wi-Fi after wake | AirportItlwm reconnects after every wake (it stops the firmware for sleep) |
@@ -83,6 +83,7 @@ XCPM stops at core C6 in Deep Idle; with Ice Lake it reaches C10
 | `-s0ixnogpureset` | never reset the iGPU at wake |
 | `-s0ixgpureset` | reset the iGPU at Deep Idle wake on Gen11/12 CPUs other than Tiger Lake too (off there by default, untested) |
 | `-s0ixwifipm` | experimental: Wi-Fi PCI function to D3 for sleep through IOPCIFamily (CNVi blocker work) |
+| `-s0ixacnortc` | experimental: **while on AC**, Deep Idle can't be woken by the RTC alarm (no maintenance dark wakes; works around the AC freeze, FINDINGS §12). Power button and lid still wake; timed wakes don't fire while plugged in |
 | `-s0ixrefclk` | experimental: at a Deep Idle sleep, with the display core already down (DC9), set the PCH display reference clock workaround i915 applies on suspend (`SOUTH_CHICKEN1` bit 7); cleared at wake |
 | `-s0ixgpuprobe` | debugging: also probe an idle iGPU and keep the last result in NVRAM (`nvram s0ix-gpu-last`) |
 | `-s0ixnodsm` | measure only, never call `_DSM` |

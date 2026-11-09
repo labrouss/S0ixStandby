@@ -46,6 +46,7 @@
 #include <libkern/OSByteOrder.h>
 #include <kern/clock.h>
 #include <pexpert/pexpert.h>
+#include <architecture/i386/pio.h>
 
 OSDefineMetaClassAndStructors(S0ixStandby, IOService)
 
@@ -83,6 +84,10 @@ enum : uint32_t {
 static const uint32_t kActionPriority = 0x8000;
 
 static const uint32_t kSleepTypeDeepIdle = 7;   // kIOPMSleepTypeDeepIdle
+static const uint16_t kPm1RtcEn = 1u << 10;      // PM1_EN.RTC_EN (ACPI fixed event)
+static const uint8_t  kCmosAie  = 1u << 5;       // RTC register B: alarm interrupt enable
+static inline uint8_t cmosRead(uint8_t reg) { outb(0x70, reg); return inb(0x71); }
+static inline void cmosWrite(uint8_t reg, uint8_t v) { outb(0x70, reg); outb(0x71, v); }
 
 // ACPI ToUUID() byte order: first three fields little-endian, rest as written.
 static bool guidToBytes(const char *s, uint8_t out[16])
@@ -229,6 +234,7 @@ bool S0ixStandby::start(IOService *provider)
 	gpuResetForced = bootArg("-s0ixgpureset");
 	wifiPM = bootArg("-s0ixwifipm");
 	refclkWA = bootArg("-s0ixrefclk");
+	acNoRtc = bootArg("-s0ixacnortc");
 	uint32_t fn = 0;
 	if (PE_parse_boot_argn("s0ixfn", &fn, sizeof(fn)))
 		fnAllow = fn;
@@ -300,7 +306,6 @@ bool S0ixStandby::start(IOService *provider)
 			scanTimer = IOTimerEventSource::timerEventSource(this, &S0ixStandby::scanTimerFired);
 			if (scanTimer && workLoop->addEventSource(scanTimer) != kIOReturnSuccess)
 				OSSafeReleaseNULL(scanTimer);
-	OSSafeReleaseNULL(liveTimer);
 			// Drivers keep loading after us: scan once boot has settled.
 			if (scanTimer) scanTimer->setTimeoutMS(60000);
 		}
@@ -316,13 +321,22 @@ bool S0ixStandby::start(IOService *provider)
 		setProperty("Wi-Fi PCI PM", "pending (set up 30 s after boot)");
 	}
 
+	if (acNoRtc) {
+		if (setupRtcBlock() && workLoop) {
+			acTimer = IOTimerEventSource::timerEventSource(this, &S0ixStandby::acTimerFired);
+			if (acTimer && workLoop->addEventSource(acTimer) != kIOReturnSuccess)
+				OSSafeReleaseNULL(acTimer);
+			if (acTimer) acTimer->setTimeoutMS(5000);
+		}
+	} else {
+		setProperty("AC RTC wake block", "off (boot-arg -s0ixacnortc)");
+	}
+
 	if ((gpuProbe || gpuReset) && !setupGPU() && gpuTries < 100 && workLoop) {
 		// The iGPU nub may not be published yet this early: retry.
 		gpuTimer = IOTimerEventSource::timerEventSource(this, &S0ixStandby::gpuTimerFired);
 		if (gpuTimer && workLoop->addEventSource(gpuTimer) != kIOReturnSuccess)
 			OSSafeReleaseNULL(gpuTimer);
-	OSSafeReleaseNULL(wifiTimer);
-	OSSafeReleaseNULL(wifiDev);
 		if (gpuTimer) gpuTimer->setTimeoutMS(10000);
 	}
 
@@ -338,7 +352,7 @@ bool S0ixStandby::start(IOService *provider)
 	// after start() succeeds (IOService.cpp, IOInstallServiceSleepPlatformActions).
 	setProperty("IOPlatformSleepAction", (unsigned long long)kActionPriority, 32);
 	setProperty("IOPlatformWakeAction", (unsigned long long)kActionPriority, 32);
-	if (cstateMask || (pmcDump && counterPage) || gatingPtr) {
+	if (cstateMask || (pmcDump && counterPage) || gatingPtr || pm1EnPort) {
 		// Boot-CPU snapshot right around the Deep Idle halt (MSR/MMIO reads only).
 		setProperty("IOPlatformQuiesceAction", (unsigned long long)kActionPriority, 32);
 		setProperty("IOPlatformActiveAction", (unsigned long long)kActionPriority, 32);
@@ -380,6 +394,10 @@ void S0ixStandby::stop(IOService *provider)
 		wifiTimer->cancelTimeout();
 		if (workLoop) workLoop->removeEventSource(wifiTimer);
 	}
+	if (acTimer) {
+		acTimer->cancelTimeout();
+		if (workLoop) workLoop->removeEventSource(acTimer);
+	}
 	IOService::stop(provider);
 }
 
@@ -389,6 +407,9 @@ void S0ixStandby::free()
 	OSSafeReleaseNULL(scanTimer);
 	OSSafeReleaseNULL(liveTimer);
 	OSSafeReleaseNULL(gpuTimer);
+	OSSafeReleaseNULL(wifiTimer);
+	OSSafeReleaseNULL(wifiDev);
+	OSSafeReleaseNULL(acTimer);
 	OSSafeReleaseNULL(workLoop);
 	gpuMMIO = nullptr;
 	OSSafeReleaseNULL(gpuMap);
@@ -891,6 +912,7 @@ IOReturn S0ixStandby::callPlatformFunction(const OSSymbol *functionName, bool wa
 		if (functionName->isEqualTo("IOPlatformWakeAction"))  { onWake();  return kIOReturnSuccess; }
 		// Interrupts are disabled in these two: MSR reads only, no locks/logging.
 		if (functionName->isEqualTo("IOPlatformQuiesceAction")) {
+			if (rtcBlocked) outw(pm1EnPort, (uint16_t)(inw(pm1EnPort) & ~kPm1RtcEn));
 			if (cstateMask) { readHalt(haltAtQuiesce); tscAtQuiesce = rdtsc(); haltValid = false; }
 			if (pmcDump && counterPage) {
 				for (uint32_t i = 0; i < 1024; i++) pmcAtHalt[i] = counterPage[i];
@@ -914,6 +936,75 @@ IOReturn S0ixStandby::callPlatformFunction(const OSSymbol *functionName, bool wa
 		}
 	}
 	return IOService::callPlatformFunction(functionName, waitForFunction, param1, param2, param3, param4);
+}
+
+// ---------------------------------------------------------------------------
+// -s0ixacnortc: no RTC (alarm) wakes from Deep Idle while on AC
+// ---------------------------------------------------------------------------
+// On AC macOS schedules a maintenance dark wake every ~5 min (battery
+// management); on some machines one of those re-sleeps eventually hangs
+// (FINDINGS §12). RTC alarms reach the CPU only through the ACPI fixed event
+// RTC_EN (PM1_EN bit 10). Clearing it at the Deep Idle sleep action, and
+// restoring it first thing at wake, lets the alarm be programmed but never
+// wake the machine; power button, lid and other GPEs are unaffected.
+
+bool S0ixStandby::setupRtcBlock()
+{
+	const OSData *fadt = nullptr;
+	if (IOACPIPlatformExpert *acpi = OSDynamicCast(IOACPIPlatformExpert, getPlatform()))
+		fadt = ACPITableAccess::get(acpi, "FACP", 0);
+	if (!fadt && getPlatform())
+		if (OSDictionary *tables = OSDynamicCast(OSDictionary, getPlatform()->getProperty("ACPI Tables")))
+			fadt = OSDynamicCast(OSData, tables->getObject("FACP"));
+	if (!fadt || fadt->getLength() < 89) {
+		setProperty("AC RTC wake block", "unavailable: no FADT");
+		return false;
+	}
+	const uint8_t *f = static_cast<const uint8_t *>(fadt->getBytesNoCopy());
+	uint32_t len = fadt->getLength();
+	uint64_t base = OSReadLittleInt32(f, 56);                 // PM1a_EVT_BLK
+	uint8_t evtLen = f[88];                                     // PM1_EVT_LEN
+	if (len >= 160 && f[148] == 1 && OSReadLittleInt64(f, 152))  // X_PM1a_EVT_BLK, SystemIO
+		base = OSReadLittleInt64(f, 152);
+	uint64_t port = base + evtLen / 2;
+	char buf[96];
+	if (!base || evtLen < 4 || port > 0xFFFE) {
+		snprintf(buf, sizeof(buf), "unavailable: PM1a event block 0x%llx, length %u",
+		         (unsigned long long)base, evtLen);
+		setProperty("AC RTC wake block", buf);
+		return false;
+	}
+	pm1EnPort = (uint16_t)port;
+	snprintf(buf, sizeof(buf), "armed: PM1_EN at I/O 0x%x (RTC_EN now %s)", pm1EnPort,
+	         (inw(pm1EnPort) & kPm1RtcEn) ? "set" : "clear");
+	setProperty("AC RTC wake block", buf);
+	LOG("AC RTC wake block %s", buf);
+	return true;
+}
+
+// Power source state for the sleep action, which must not touch the registry.
+void S0ixStandby::updateAC()
+{
+	bool ac = false;
+	if (OSDictionary *match = serviceMatching("IOPMPowerSource")) {
+		if (OSIterator *it = getMatchingServices(match)) {
+			while (OSObject *o = it->getNextObject())
+				if (IOService *ps = OSDynamicCast(IOService, o))
+					if (OSBoolean *b = OSDynamicCast(OSBoolean, ps->getProperty("ExternalConnected")))
+						if (b->isTrue()) ac = true;
+			it->release();
+		}
+		match->release();
+	}
+	onAC = ac;
+}
+
+void S0ixStandby::acTimerFired(OSObject *owner, IOTimerEventSource *sender)
+{
+	if (S0ixStandby *self = OSDynamicCast(S0ixStandby, owner)) {
+		self->updateAC();
+		sender->setTimeoutMS(10000);
+	}
 }
 
 void S0ixStandby::onSleep()
@@ -944,11 +1035,33 @@ void S0ixStandby::onSleep()
 		dsmEntry();
 		entered = true;
 	}
-	DBG("sleep: type %u, dsm %s, counter %llu", lastSleepType, entered ? "entry" : "skipped", counterAtSleep);
+	// Last step: nothing after us may touch PM1_EN before the halt.
+	rtcBlocked = false;
+	if (acNoRtc && pm1EnPort && onAC && lastSleepType == kSleepTypeDeepIdle) {
+		// Two layers: the RTC's own alarm interrupt enable (CMOS register B
+		// AIE), so no alarm event is raised at all, and the ACPI fixed event
+		// enable RTC_EN, cleared again at the quiesce action in case the
+		// platform re-enabled it.
+		cmosBSaved = cmosRead(0x0B);
+		if (cmosBSaved & kCmosAie) cmosWrite(0x0B, (uint8_t)(cmosBSaved & ~kCmosAie));
+		pm1EnSaved = inw(pm1EnPort);
+		if (pm1EnSaved & kPm1RtcEn) outw(pm1EnPort, (uint16_t)(pm1EnSaved & ~kPm1RtcEn));
+		rtcBlocked = true;
+	}
+	DBG("sleep: type %u, dsm %s, counter %llu, rtc wake %s", lastSleepType, entered ? "entry" : "skipped",
+	    counterAtSleep, rtcBlocked ? "blocked (AC)" : "allowed");
 }
 
 void S0ixStandby::onWake()
 {
+	// First: give RTC wakes back before anything else runs.
+	if (rtcBlocked) {
+		(void)cmosRead(0x0C);                    // drop an alarm flag raised while blocked
+		if (cmosBSaved & kCmosAie) cmosWrite(0x0B, (uint8_t)(cmosRead(0x0B) | kCmosAie));
+		outw(pm1EnPort, (uint16_t)(inw(pm1EnPort) | (pm1EnSaved & kPm1RtcEn)));
+		rtcBlocked = false;
+		rtcBlockCount++;
+	}
 	if (entered) {
 		dsmExit();
 		entered = false;
@@ -1027,6 +1140,10 @@ void S0ixStandby::publish()
 	absolutetime_to_nanoseconds(snap.timeAtWake - snap.timeAtSleep, &ns);
 
 	setProperty("Sleep count", (unsigned long long)snap.sleepCount, 32);
+	if (acNoRtc && pm1EnPort) {
+		setProperty("AC RTC wake blocks", (unsigned long long)rtcBlockCount, 32);
+		setProperty("On AC (last check)", onAC);
+	}
 	setProperty("Last sleep type", (unsigned long long)snap.sleepType, 32);
 	setProperty("Last DSM entry/exit", snap.sleepType == kSleepTypeDeepIdle && dsmEnabled);
 	setProperty("Last residency ticks", (unsigned long long)ticks, 64);
