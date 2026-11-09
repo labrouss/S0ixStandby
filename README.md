@@ -28,7 +28,8 @@ HP EliteBook 840 G8 (Tiger Lake), macOS Tahoe 26.7.1, OpenCore 1.0.8.
 | | |
 |---|---|
 | Real S0ix (SLP_S0) | Not asserted, although package C10 is reached and every PMC requirement Linux needs is met at the halt (display, CNVi, ISH, Thunderbolt all ruled out, [FINDINGS §11](docs/FINDINGS.md)). Power is already in Linux's S0ix range, so the gain left is a few tenths of a watt |
-| Sleep-entry stall (`GFX0(): Some drivers failed to handle setPowerState`) | Rare per sleep, but on **AC power** macOS's battery-charging management wakes the machine every ~5 min all night, and one of those cycles eventually hangs (LED solid). Inside Apple's TGL graphics driver / WhateverXe; reported upstream. Sleep on battery is much less exposed |
+| **Freeze on AC** (`GFX0(): Some drivers failed to handle setPowerState`) | On **AC power** macOS's battery management dark-wakes the machine every ~5 min; after 3–9 cycles the re-sleep freezes hard (LED steady). Reproduced **with S0ixStandby disabled** and with acceleration off: it is Deep Idle + Apple's TGL framebuffer on this laptop ([FINDINGS §12](docs/FINDINGS.md)), reported to WhateverXe. **Workaround: sleep on battery** (11.5 h night with 26 dark wakes clean) |
+| GPU hangs with hardware video (WhateverXe, TGL) | YouTube/Photo Booth decode hangs the GPU every ~10 s (`GPURestartSignaled`, CCS ring). Removing `AppleIntelTGLGraphicsVADriver.bundle` stops it (software decode, Metal stays). Not related to S0ixStandby |
 | Rare dark display after wake | Seen twice, not reproducible with the same settings; please report with `macos/wake-report.sh` |
 | Wi-Fi after wake | AirportItlwm reconnects after every wake (it stops the firmware for sleep) |
 

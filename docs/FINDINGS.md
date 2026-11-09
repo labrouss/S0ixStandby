@@ -354,6 +354,39 @@ normal sleep-time values.
 **Perspective:** Linux S0ix 0.76 W; macOS Deep Idle without SLP_S0
 ≈ 0.5–1.0 W. The missing SLP_S0 is now worth at most a few tenths of a watt.
 
+## 12. Freeze on AC: dark-wake re-sleep, independent of S0ixStandby (2026-11-09)
+
+On AC at 100 % charge macOS schedules a maintenance dark wake every ~5 min
+(`PowerUIAgent … com.apple.obc`, `powerd … GaugingMitigationActions`); no
+`pmset` switch turns these off here (Optimized Battery Charging is not
+offered for this battery). After 3–9 dark wakes the next "Entering Sleep …
+Maintenance Sleep" never completes: LED steady, no ping, no Caps Lock, no
+panic; `pmset` then reports `Failure during sleep: GFX0() : Some drivers
+failed to handle setPowerState`.
+
+| Test on AC | Result |
+|---|---|
+| default (0.4.4/0.5.0, acceleration, VA, GPU reset, `-s0ixwifipm`) | freeze |
+| `io=0x800 debug=0x100` (panic on a `setPowerState` timeout) | freeze, no panic |
+| `AppleIntelTGLGraphicsVADriver.bundle` removed | freeze |
+| + `-wex-noaccel` (no accelerator, so no GPU reset) | freeze |
+| + no `-s0ixwifipm` | freeze |
+| + `s0ixfn=0x18` (no `_DSM` 5/6, no EC sleep flag) | freeze |
+| + `-s0ixoff` (S0ixStandby not running) | freeze |
+
+On battery: 11.5 h night with 26 dark wakes clean (0.1.12, no acceleration),
+4 h with acceleration and 5 dark wakes clean. **Conclusion:** macOS Deep Idle
+with Apple's pre-release TGL framebuffer fails in dark-wake re-sleeps on AC;
+S0ixStandby is not involved. WhateverXe does not hook the TGL framebuffer's
+power path (0.7.0 source: only the ADL-N DSI `setPowerState`) and lists full
+sleep/wake as unverified. Reported upstream (docs/UPSTREAM-WHATEVERXE.md,
+draft 3). Workaround: sleep on battery.
+
+Separately, hardware video decode hangs the GPU every ~10 s on this setup
+(`GPURestartSignaled`, `.gpuRestart`: `VTDecoderXPCService`, hung CCS ring
+not enabled); removing the VA bundle stops it (draft 2). It explained the GPU
+restarts while awake, not the freeze.
+
 ## Still to capture
 
 - A 30–60 min run of `s2idle-test.sh` for a tighter power number.
