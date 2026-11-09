@@ -18,6 +18,13 @@
 #   bash macos/lpm-status.sh
 
 P=$(ioreg -rd1 -c S0ixStandby -w0)
+MODEL=$(echo "$P" | sed -n 's/.*"CPU model" = \([0-9]*\).*/\1/p')
+case "$MODEL" in
+  140|141) ;;
+  *) echo "This decoder is for Tiger Lake-LP (CPU model 140/141); this CPU reports model ${MODEL:-unknown}."
+     echo "Register offsets and bit names differ on other platforms: the comparison would be meaningless."
+     exit 1;;
+esac
 hexof() { echo "$P" | sed -n "s/.*\"$1\" = <\([0-9a-f]*\)>.*/\1/p"; }
 BOOT=$(hexof "PMC page at boot"); HALT=$(hexof "PMC page at halt"); AFTER=$(hexof "PMC page after halt")
 [ -n "$BOOT" ] || { echo "No PMC dump: boot with -s0ixpmcdump."; exit 1; }

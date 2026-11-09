@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.5.0 (2026-11-09)
+
+Consolidates 0.4.3–0.4.4 and adds platform guards from the first outside
+test reports. Nothing changes on Tiger Lake with the default boot-args.
+
+- **AMD guard:** on an AMD (or Hygon) CPU the kext publishes `Deep Idle =
+  unsupported on AMD …`, logs a warning and registers no sleep/wake actions
+  and no `_DSM` calls. XNU's Deep Idle halt (`pmCPUHalt(PM_HALT_SLEEP)`)
+  needs a CPU power-management halt handler that only Intel has (XCPM /
+  AppleIntelCPUPowerManagement); without it the CPU is stopped with
+  interrupts off and cannot wake. Reported on a Ryzen 5 5500U, with and
+  without `-s0ixnodsm`.
+- **iGPU reset default on Tiger Lake only** (CPU model 0x8C/0x8D, where it
+  was developed with WhateverXe). Other Gen11/12 CPUs (Ice Lake, Alder/Raptor
+  Lake, e.g. with NootedGreen) need `-s0ixgpureset` to enable it.
+- `macos/lpm-status.sh` refuses to run on CPUs other than Tiger Lake-LP
+  (its offsets and bit names are TGL-specific).
+- README: platform support table, how to find a driver that blocks sleep
+  entry (`io=0x800`: XNU panics on a `setPowerState` timeout and names the
+  driver), where `-s0ixdbg` output goes, known limitations updated (SLP_S0
+  investigation, sleep-entry stall on AC).
+
 ## 0.4.4 (unreleased): PCH display refclk workaround (experiment)
 
 - `-s0ixrefclk` (experimental, off by default): at a Deep Idle sleep

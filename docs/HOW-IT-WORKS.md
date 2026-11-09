@@ -144,6 +144,7 @@ On the HP EliteBook 840 G8 everything up to the fourth row works (0.4.0:
 | `-s0ixnocst` | don't read CPU C-state MSRs |
 | (default) | Intel Gen11/12 iGPU: at a Deep Idle wake, before any driver wakes, check whether the GPU kept its state and if so reset its engines, so the graphics driver finds the blank GPU it expects |
 | `-s0ixnogpureset` | never reset the GPU |
+| `-s0ixgpureset` | enable the wake-time GPU reset on Gen11/12 CPUs other than Tiger Lake (default there: off, untested) |
 | `-s0ixwifipm` | experimental: let macOS's PCI layer put the Wi-Fi function into D3 for sleep (as Apple's drivers request), with its ACPI `_PS3` and config restore on wake |
 | `-s0ixrefclk` | experimental: i915's Wa_14010685332 for Deep Idle: `SOUTH_CHICKEN1` (iGPU MMIO 0xC2000) bit 7 set at the sleep action when the display core is down (DC9, power wells off), cleared at the wake action |
 | `-s0ixgpuprobe` | debugging: also probe an idle GPU and keep the last result in NVRAM (`nvram s0ix-gpu-last`, survives a panic) |

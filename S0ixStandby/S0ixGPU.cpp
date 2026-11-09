@@ -223,15 +223,23 @@ bool S0ixStandby::setupGPU()
 
 	cleanNvram();
 	dispTgl = cpuModel != 0x7D && cpuModel != 0x7E;   // Ice Lake keeps the Gen9 counter layout
+	// The wake-time GT reset was developed and tested on Tiger Lake with
+	// WhateverXe. Elsewhere (Ice Lake, Alder/Raptor Lake, NootedGreen, ...)
+	// it stays off unless asked for with -s0ixgpureset.
+	bool tgl = cpuModel == 0x8C || cpuModel == 0x8D;
+	bool resetDefaultOff = gpuReset && !tgl && !gpuResetForced;
+	if (resetDefaultOff) gpuReset = false;
 	gpuDev = found;
 	gpuMap = map;
 	gpuPmCap = pm;
 	gpuMMIO = reinterpret_cast<volatile uint8_t *>(map->getVirtualAddress());
 
-	char buf[96];
+	char buf[128];
 	uint32_t id = found->configRead32(kIOPCIConfigVendorID);
 	snprintf(buf, sizeof(buf), "00:02.0 %04x:%04x, %s%s", id & 0xFFFF, id >> 16,
-	         gpuReset ? "reset on Deep Idle wake if state kept" : "no reset (-s0ixnogpureset)",
+	         gpuReset ? "reset on Deep Idle wake if state kept"
+	                  : resetDefaultOff ? "no reset (tested on Tiger Lake only; -s0ixgpureset enables it)"
+	                                    : "no reset (-s0ixnogpureset)",
 	         gpuProbe ? ", full probe + NVRAM record" : "");
 	setProperty("GPU", buf);
 	LOG("GPU %s", buf);

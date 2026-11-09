@@ -169,7 +169,7 @@ private:
 
 	// -s0ixgpuprobe / -s0ixgpureset (S0ixGPU.cpp): Intel Gen11/12 iGPU state
 	// across Deep Idle, and an optional GT reset at wake before drivers wake.
-	bool gpuProbe {false}, gpuReset {false};
+	bool gpuProbe {false}, gpuReset {false}, gpuResetForced {false};
 	uint32_t cpuModel {0};
 	IOPCIDevice *gpuDev {nullptr};
 	IOMemoryMap *gpuMap {nullptr};

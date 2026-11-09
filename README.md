@@ -8,8 +8,8 @@ sleeps in **Deep Idle** (the S0 sleep built into XNU) with the Modern Standby
 
 [![build](https://github.com/labrouss/S0ixStandby/actions/workflows/build.yml/badge.svg)](https://github.com/labrouss/S0ixStandby/actions/workflows/build.yml)
 
-**Status: pre-release 0.4.0.** Generic: any laptop with an ACPI LPS0 device
-(`PNP0D80`). Built and released by GitHub Actions only. First test machine:
+**Status: pre-release 0.5.0.** Generic: any Intel laptop with an ACPI LPS0
+device (`PNP0D80`); **not AMD** (see [Platform support](#platform-support)). Built and released by GitHub Actions only. First test machine:
 HP EliteBook 840 G8 (Tiger Lake), macOS Tahoe 26.7.1, OpenCore 1.0.8.
 **Testers with other laptops wanted**, see [Testing](#testing-wanted).
 
@@ -27,8 +27,9 @@ HP EliteBook 840 G8 (Tiger Lake), macOS Tahoe 26.7.1, OpenCore 1.0.8.
 
 | | |
 |---|---|
-| Real S0ix (SLP_S0) | Not reached yet: CNVi (Intel Wi-Fi/BT) stays powered because the macOS Wi-Fi/BT drivers don't power it down for sleep. That is why sleep is ~1 W, not lower. The fix belongs in those drivers |
-| Rare freeze after wake | Seen once after a 30 min sleep (no acceleration, no panic), not reproduced in 3 identical runs; please report with `macos/wake-report.sh` |
+| Real S0ix (SLP_S0) | Not asserted, although package C10 is reached and every PMC requirement Linux needs is met at the halt (display, CNVi, ISH, Thunderbolt all ruled out, [FINDINGS §11](docs/FINDINGS.md)). Power is already in Linux's S0ix range, so the gain left is a few tenths of a watt |
+| Sleep-entry stall (`GFX0(): Some drivers failed to handle setPowerState`) | Rare per sleep, but on **AC power** macOS's battery-charging management wakes the machine every ~5 min all night, and one of those cycles eventually hangs (LED solid). Inside Apple's TGL graphics driver / WhateverXe; reported upstream. Sleep on battery is much less exposed |
+| Rare dark display after wake | Seen twice, not reproducible with the same settings; please report with `macos/wake-report.sh` |
 | Wi-Fi after wake | AirportItlwm reconnects after every wake (it stops the firmware for sleep) |
 
 ## How it works
@@ -64,6 +65,14 @@ XCPM stops at core C6 in Deep Idle; with Ice Lake it reaches C10
 **WhateverXe users:** acceleration works across sleep from 0.4.0 on; remove
 `-wex-noaccel`.
 
+### Platform support
+
+| Platform | Status |
+|---|---|
+| Intel Tiger Lake (tested), other Intel with LPS0 | supported; the wake-time iGPU reset is on by default on Tiger Lake only |
+| Intel Ice Lake / Alder Lake / Raptor Lake iGPU | sleep path generic; the iGPU reset stays off unless `-s0ixgpureset` (untested there, e.g. with NootedGreen) |
+| **AMD** | **not supported.** XNU's Deep Idle halt (`pmCPUHalt(PM_HALT_SLEEP)`, xnu `osfmk/i386/pmCPU.c`) needs a CPU power-management halt handler (Intel XCPM / AppleIntelCPUPowerManagement); without one it stops the CPU with interrupts off and it never wakes, with or without the `_DSM` calls. Don't install SSDT-DEEPIDLE on AMD. From 0.5.0 the kext detects AMD and stays out of the sleep path |
+
 ### Boot-args (all optional)
 
 | Boot-arg | Effect |
@@ -71,6 +80,7 @@ XCPM stops at core C6 in Deep Idle; with Ice Lake it reaches C10
 | `-s0ixd3` | keep PCI devices that have no macOS driver in D3hot (recommended) |
 | `-s0ixdbg` | verbose log |
 | `-s0ixnogpureset` | never reset the iGPU at wake |
+| `-s0ixgpureset` | reset the iGPU at Deep Idle wake on Gen11/12 CPUs other than Tiger Lake too (off there by default, untested) |
 | `-s0ixwifipm` | experimental: Wi-Fi PCI function to D3 for sleep through IOPCIFamily (CNVi blocker work) |
 | `-s0ixrefclk` | experimental: at a Deep Idle sleep, with the display core already down (DC9), set the PCH display reference clock workaround i915 applies on suspend (`SOUTH_CHICKEN1` bit 7); cleared at wake |
 | `-s0ixgpuprobe` | debugging: also probe an idle iGPU and keep the last result in NVRAM (`nvram s0ix-gpu-last`) |
@@ -83,7 +93,7 @@ XCPM stops at core C6 in Deep Idle; with Ice Lake it reaches C10
 ## Testing wanted
 
 Most useful: **other laptops** with an Intel CPU whose S3 sleep doesn't work
-on macOS (AMD: the `_DSM` support is there but untested), and long sleeps.
+on macOS, and long sleeps. (AMD cannot work, see [Platform support](#platform-support).)
 
 1. Install as above, sleep for 30+ minutes, wake.
 2. `sudo bash macos/wake-report.sh`: one report per sleep/wake (panics,
@@ -92,6 +102,21 @@ on macOS (AMD: the `_DSM` support is there but untested), and long sleeps.
 3. Open an issue with the report, the laptop model, CPU and macOS version.
    [docs/TESTING.md](docs/TESTING.md) has the checklist (what to note before
    sleep and on wake).
+
+**Sleep hangs before Deep Idle** (screen off, fan on, `Failure during sleep:
+… Some drivers failed to handle setPowerState` after the reboot): that is a
+driver failing to power down, before S0ixStandby's part runs; it usually
+happens with a fake `_S3` too. To find it, boot once with `io=0x800 keepsyms=1`:
+XNU then panics when a driver's `setPowerState` times out, and the panic
+report (which survives the forced reboot) names the driver. No panic at all
+means a CPU froze outright (often an NVMe/PCIe hang). Also check
+`PKG_CST_CONFIG_CONTROL` in `macos/s0ix-status.sh`: a limit below C10 (e.g.
+`C0/C1`, set by the firmware's C-state option) prevents any real standby.
+
+**Logs:** `-s0ixdbg` output goes to the unified log
+(`log show --last 1h --predicate 'eventMessage CONTAINS "S0ixStandby"'`).
+After a forced power-off the newest entries are usually lost (the log is
+written in batches); the kext's ioreg properties reset with the reboot.
 
 ## Build
 

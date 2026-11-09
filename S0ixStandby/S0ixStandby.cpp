@@ -185,6 +185,21 @@ static uint32_t cstateSupport(uint32_t &modelOut)
 	return 0;
 }
 
+// AMD (and Hygon): XNU's Deep Idle halt, pmCPUHalt(PM_HALT_SLEEP), only parks
+// the CPU in a wakeable state through a registered CPU power-management
+// handler (pmDispatch: Intel XCPM / AppleIntelCPUPowerManagement). Without
+// one it stops the CPU with interrupts off (osfmk/i386/pmCPU.c), so the first
+// Deep Idle sleep never wakes. Reported on a Ryzen 5 5500U, with and without
+// the _DSM calls.
+static bool cpuIsAMD()
+{
+	uint32_t a, b, c, d;
+	cpuid(0, a, b, c, d);
+	bool amd   = b == 0x68747541 && d == 0x69746e65 && c == 0x444d4163;   // "AuthenticAMD"
+	bool hygon = b == 0x6f677948 && d == 0x6e65476e && c == 0x656e6975;   // "HygonGenuine"
+	return amd || hygon;
+}
+
 static bool bootArg(const char *name)
 {
 	int dummy = 0;
@@ -211,6 +226,7 @@ bool S0ixStandby::start(IOService *provider)
 	// compatibility (same as the default).
 	gpuProbe = bootArg("-s0ixgpuprobe");
 	gpuReset = !bootArg("-s0ixnogpureset");
+	gpuResetForced = bootArg("-s0ixgpureset");
 	wifiPM = bootArg("-s0ixwifipm");
 	refclkWA = bootArg("-s0ixrefclk");
 	uint32_t fn = 0;
@@ -219,6 +235,16 @@ bool S0ixStandby::start(IOService *provider)
 
 	if (!IOService::start(provider))
 		return false;
+
+	if (cpuIsAMD()) {
+		// Stay out of the sleep path: no platform actions, no _DSM calls.
+		setProperty("Deep Idle", "unsupported on AMD: XNU has no CPU power-management halt handler there, "
+		            "the CPU cannot wake from Deep Idle. Remove SSDT-DEEPIDLE.");
+		LOG("AMD CPU: Deep Idle cannot wake on this platform (no XNU halt handler); "
+		    "not registering sleep/wake actions. Remove SSDT-DEEPIDLE.");
+		registerService();
+		return true;
+	}
 
 	lps0 = OSDynamicCast(IOACPIPlatformDevice, provider);
 	if (!lps0) {
