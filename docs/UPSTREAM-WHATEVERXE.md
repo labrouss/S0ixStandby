@@ -128,9 +128,9 @@ Happy to test builds and provide more reports or tailspins.
 
 # Draft issue 3: system freeze when re-entering sleep after a dark wake (TGL, on AC)
 
-> Status: ready to post (2026-11-09).
+> Status: ready to post (updated 2026-11-10).
 
-**Title:** Tiger Lake: hard freeze in the framebuffer's re-sleep after a dark wake (Deep Idle, on AC), also with `-wex-noaccel`
+**Title:** Tiger Lake: hard freeze in `GFX0` `setPowerState` on sleep entry (Deep Idle, mostly on AC), also with `-wex-noaccel`
 
 **Setup**
 
@@ -165,6 +165,19 @@ Failure during sleep: GFX0() : Some drivers failed to handle setPowerState
 | + S0ixStandby Wi-Fi D3 off | freeze |
 | + no S0ixStandby `_DSM` 5/6 (EC sleep flag) | freeze |
 | + **S0ixStandby disabled** (`-s0ixoff`, Deep Idle from the SSDT only) | freeze |
+| RTC dark wakes blocked while asleep on AC (S0ixStandby `-s0ixacnortc`) | 2 h asleep with no dark wakes and no freeze; the **next** sleep froze |
+
+It is not limited to the re-sleep after a dark wake. The latest freeze was a
+user-requested sleep (`Entering Sleep state due to 'Software Sleep'`, AC,
+100 %), ~3 minutes after boot. Display sleep and a 15 s dark-wake linger came
+first, then the sleep, then the freeze, with a steady LED. Between 2026-11-05
+and 2026-11-10, `pmset -g log` lists **15** `Failure during sleep: GFX0() :
+Some drivers failed to handle setPowerState` entries. That is every hang in
+that period. No other driver is named.
+
+S0ixStandby's sleep code runs as an `IOPlatformSleepAction`, i.e. only after
+all drivers' `setPowerState` calls have returned, so it never ran during these
+hangs.
 
 On battery the same machine did an 11.5 h Deep Idle night with 26 dark wakes
 cleanly (no acceleration), and 4 h with acceleration and 5 dark wakes.
