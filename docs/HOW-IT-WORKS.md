@@ -116,6 +116,8 @@ the `S0ixStandby` service.
 | Live blockers | The same, refreshed every 10 s while awake |
 | DSM masks, LPIT, MSR 0xE2 | What the firmware and CPU offer |
 | GPU state after sleep / GPU reset | Whether the iGPU kept its state, and whether (and how fast) it was reset |
+| Battery full state | Read every minute from `IOPMPowerSource`. `stuck` = on AC, not charging, not FullyCharged, within 3 % of full: macOS then dark-wakes every few minutes ([BATTERY-FULL](BATTERY-FULL.md)) |
+| Since boot (script) | Sleeps, dark wakes and hours asleep since boot, from `pmset -g log` |
 
 ## The usual chain to S0ix, and where each step can fail
 

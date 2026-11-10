@@ -234,6 +234,13 @@ private:
 	void updateAC();
 	static void acTimerFired(OSObject *owner, IOTimerEventSource *sender);
 
+	// Battery "full" state check: AC, not charging, not FullyCharged, but
+	// within 3 % of full makes macOS dark-wake every few minutes.
+	IOTimerEventSource *battTimer {nullptr};
+	uint8_t battState {0xFF};
+	void battCheck();
+	static void battTimerFired(OSObject *owner, IOTimerEventSource *sender);
+
 	void onSleep();
 	void onWake();
 	void publish();

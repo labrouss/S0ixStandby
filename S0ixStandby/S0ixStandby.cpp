@@ -332,6 +332,14 @@ bool S0ixStandby::start(IOService *provider)
 		setProperty("AC RTC wake block", "off (boot-arg -s0ixacnortc)");
 	}
 
+	if (workLoop) {
+		battTimer = IOTimerEventSource::timerEventSource(this, &S0ixStandby::battTimerFired);
+		if (battTimer && workLoop->addEventSource(battTimer) != kIOReturnSuccess)
+			OSSafeReleaseNULL(battTimer);
+		if (battTimer) battTimer->setTimeoutMS(30000);
+		setProperty("Battery full state", "pending (first check 30 s after boot)");
+	}
+
 	if ((gpuProbe || gpuReset) && !setupGPU() && gpuTries < 100 && workLoop) {
 		// The iGPU nub may not be published yet this early: retry.
 		gpuTimer = IOTimerEventSource::timerEventSource(this, &S0ixStandby::gpuTimerFired);
@@ -398,6 +406,10 @@ void S0ixStandby::stop(IOService *provider)
 		acTimer->cancelTimeout();
 		if (workLoop) workLoop->removeEventSource(acTimer);
 	}
+	if (battTimer) {
+		battTimer->cancelTimeout();
+		if (workLoop) workLoop->removeEventSource(battTimer);
+	}
 	IOService::stop(provider);
 }
 
@@ -410,6 +422,7 @@ void S0ixStandby::free()
 	OSSafeReleaseNULL(wifiTimer);
 	OSSafeReleaseNULL(wifiDev);
 	OSSafeReleaseNULL(acTimer);
+	OSSafeReleaseNULL(battTimer);
 	OSSafeReleaseNULL(workLoop);
 	gpuMMIO = nullptr;
 	OSSafeReleaseNULL(gpuMap);
@@ -1004,6 +1017,78 @@ void S0ixStandby::acTimerFired(OSObject *owner, IOTimerEventSource *sender)
 	if (S0ixStandby *self = OSDynamicCast(S0ixStandby, owner)) {
 		self->updateAC();
 		sender->setTimeoutMS(10000);
+	}
+}
+
+static bool psBool(IOService *ps, const char *key, bool &out)
+{
+	OSBoolean *b = OSDynamicCast(OSBoolean, ps->getProperty(key));
+	if (!b) return false;
+	out = b->isTrue();
+	return true;
+}
+
+static bool psNum(IOService *ps, const char *key, uint64_t &out)
+{
+	OSNumber *n = OSDynamicCast(OSNumber, ps->getProperty(key));
+	if (!n) return false;
+	out = n->unsigned64BitValue();
+	return true;
+}
+
+// Detects an AC-connected battery that the EC stopped charging just short of
+// its last full charge: macOS then sees "not charging, not full, no reason"
+// and powerd/PowerUIAgent schedule dark wakes every few minutes
+// (docs/BATTERY-FULL.md). Read-only.
+void S0ixStandby::battCheck()
+{
+	enum { kNone, kBattery, kCharging, kFull, kNotFull, kStuck };
+	uint8_t state = kNone;
+	uint64_t cur = 0, max = 0;
+	if (OSDictionary *match = serviceMatching("IOPMPowerSource")) {
+		if (OSIterator *it = getMatchingServices(match)) {
+			while (OSObject *o = it->getNextObject()) {
+				IOService *ps = OSDynamicCast(IOService, o);
+				bool ext = false, chg = false, full = false;
+				if (!ps || !psBool(ps, "ExternalConnected", ext)) continue;
+				if (!psNum(ps, "CurrentCapacity", cur) || !psNum(ps, "MaxCapacity", max) || !max) continue;
+				psBool(ps, "IsCharging", chg);
+				psBool(ps, "FullyCharged", full);
+				if (!ext) state = kBattery;
+				else if (chg) state = kCharging;
+				else if (full) state = kFull;
+				else if (cur < max && cur * 100 >= max * 97) state = kStuck;
+				else state = kNotFull;
+				break;
+			}
+			it->release();
+		}
+		match->release();
+	}
+
+	char buf[192];
+	switch (state) {
+	case kNone:     snprintf(buf, sizeof(buf), "no battery"); break;
+	case kBattery:  snprintf(buf, sizeof(buf), "ok: on battery"); break;
+	case kCharging: snprintf(buf, sizeof(buf), "ok: on AC, charging"); break;
+	case kFull:     snprintf(buf, sizeof(buf), "ok: on AC, fully charged"); break;
+	case kNotFull:  snprintf(buf, sizeof(buf), "on AC, not charging (%llu/%llu)", cur, max); break;
+	default:
+		snprintf(buf, sizeof(buf), "stuck: on AC, not charging, %llu/%llu, FullyCharged No: "
+		         "macOS dark-wakes every few minutes (see docs/BATTERY-FULL.md)", cur, max);
+		break;
+	}
+	setProperty("Battery full state", buf);
+	if (state != battState && (state == kStuck || battState == kStuck))
+		LOG("battery full state: %s", buf);
+	battState = state;
+}
+
+void S0ixStandby::battTimerFired(OSObject *owner, IOTimerEventSource *sender)
+{
+	if (S0ixStandby *self = OSDynamicCast(S0ixStandby, owner)) {
+		self->battCheck();
+		sender->setTimeoutMS(60000);
 	}
 }
 

@@ -6,7 +6,7 @@ echo "== kext"
 kextstat 2>/dev/null | grep -i s0ixstandby || kmutil showloaded 2>/dev/null | grep -i s0ixstandby || echo "S0ixStandby not loaded"
 echo
 echo "== S0ixStandby properties"
-ioreg -rd1 -c S0ixStandby -w0 | grep -E '"(DSM|LPIT|C-state meter|CPU model|PKG_CST|D3|SLP_S0 blocker|Sleep count|Last|Total|Residency|Wi-Fi|AC RTC|On AC)' || echo "(no S0ixStandby service)"
+ioreg -rd1 -c S0ixStandby -w0 | grep -E '"(DSM|LPIT|C-state meter|CPU model|PKG_CST|D3|SLP_S0 blocker|Sleep count|Last|Total|Residency|Wi-Fi|AC RTC|On AC|Battery full)' || echo "(no S0ixStandby service)"
 echo
 echo "== Last sleep (computed)"
 P=$(ioreg -rd1 -c S0ixStandby -w0)
@@ -22,6 +22,15 @@ if [ -n "$TSC" ] && [ -n "$TSCF" ] && [ "$TSCF" -gt 0 ]; then
   echo "$P" | grep '"Last halt C-state percent"' | sed 's/.*= {//; s/}$//; s/,/  /g; s/"//g; s/^/  /'
 else
   echo "(no C-state/TSC data yet: needs kext >= 0.1.4 and one sleep)"
+fi
+# The kext reports only the last Deep Idle stretch; sum the whole boot from pmset.
+BT=$(sysctl -n kern.boottime 2>/dev/null | sed -E 's/.*sec = ([0-9]+).*/\1/')
+if [ -n "$BT" ]; then
+  BTS=$(date -r "$BT" "+%Y-%m-%d %H:%M:%S")
+  pmset -g log 2>/dev/null | awk -v b="$BTS" 'substr($0,1,19) >= b {
+      if ($0 ~ /Entering Sleep state/) { n++; if (match($0, /[0-9]+ secs *$/)) t += substr($0, RSTART) + 0 }
+      if ($0 ~ /DarkWake from/) d++
+    } END { printf "Since boot:    %d sleeps, %d dark wakes, %.1f h asleep\n", n, d, t/3600 }'
 fi
 echo "Live (awake, every 10 s; many IPs are normally on while awake):"
 echo "$P" | grep '"Live SLP_S0 blockers"' | sed 's/.*= (//; s/)$//; s/"//g; s/^/  /' || true
@@ -42,5 +51,14 @@ echo
 echo "== Deep Idle"
 ioreg -rd1 -c IOPMrootDomain | grep -E 'IOPMDeepIdleSupported|IOPMSystemSleepType'
 echo
+echo "== Battery"
+echo "$P" | grep '"Battery full state"' | sed 's/^ *//; s/"//g; s/^/  /' || echo "  (not reported: needs 0.5.2)"
+if echo "$P" | grep -q '"Battery full state" = "stuck'; then
+  echo "  -> the EC stopped charging just short of full; see docs/BATTERY-FULL.md (SSDT-BATFULL)"
+fi
+echo
 echo "== kernel log (this boot)"
-log show --last boot --style compact --predicate 'sender == "S0ixStandby" OR eventMessage CONTAINS "S0ixStandby:"' 2>/dev/null | grep -v kernelmanager | tail -20
+# IOLog lines are not always in the unified log; fall back to the kernel message buffer.
+KL=$(log show --last boot --style compact --predicate 'eventMessage CONTAINS "S0ixStandby:"' 2>/dev/null | grep -v kernelmanager | grep "S0ixStandby:")
+[ -z "$KL" ] && KL=$(dmesg 2>/dev/null | grep "S0ixStandby:")
+if [ -n "$KL" ]; then echo "$KL" | tail -20; else echo "  (none: run with sudo for dmesg)"; fi

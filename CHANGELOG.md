@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.5.2 (unreleased): battery "not full" on AC detected; SSDT-BATFULL
+
+- **Cause of the AC freeze found:** on AC at 100 % the EC stops charging a few
+  mAh short of full (HP 840 G8: 3620/3622). SMCBatteryManager then reports
+  `IsCharging No`, `FullyCharged No` and no reason, and powerd
+  (`GaugingMitigationActions`) and Optimized Charging (`com.apple.obc`)
+  dark-wake the machine every ~5 min. Those cycles eventually hang the TGL
+  framebuffer (`GFX0()` setPowerState) at sleep entry. FINDINGS §12.1.
+- New `acpi/SSDT-BATFULL.dsl` (optional, per machine): under macOS, when
+  `_BST` says neither charging nor discharging and remaining is within 3 % of
+  last full, it returns remaining = last full, so `FullyCharged = Yes`. Needs
+  an OpenCore `_BST` → `XBST` rename; `tools/find-bst.py DSDT.aml` prints it.
+  `docs/BATTERY-FULL.md` explains how to adapt it. On the 840 G8, AC sleeps
+  at 100 % went from all freezing to 4/4 clean, with no gauging wakes.
+- Kext: new read-only property `Battery full state` (`ok: …`, or `stuck: on
+  AC, not charging, cur/max, FullyCharged No …`), checked every minute from
+  `IOPMPowerSource`; logged when it becomes or stops being `stuck`.
+- `s0ix-status.sh`: `== Battery` section with a hint to BATTERY-FULL.md;
+  `Since boot: N sleeps, N dark wakes, N h asleep` from `pmset -g log` (the
+  kext only reports the last Deep Idle stretch); the kernel-log section falls
+  back to `dmesg` when the unified log has no S0ixStandby lines (it was empty).
+- `-s0ixacnortc` stays as an optional fallback. It also blocks timed wakes
+  (`pmset relative wake`, `pmset schedule`) on AC.
+
 ## 0.5.1 (unreleased): no RTC dark wakes on AC (experiment)
 
 - `-s0ixacnortc` (experimental, off by default): while on AC, a Deep Idle

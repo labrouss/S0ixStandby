@@ -387,6 +387,42 @@ Separately, hardware video decode hangs the GPU every ~10 s on this setup
 not enabled); removing the VA bundle stops it (draft 2). It explained the GPU
 restarts while awake, not the freeze.
 
+### 12.1 Update (2026-11-10): the trigger is the battery state at 100 %, fixed by SSDT-BATFULL
+
+All 15 hangs between 2026-11-05 and 2026-11-10 are the same `Failure during
+sleep: GFX0() : Some drivers failed to handle setPowerState`; no other driver
+is named. S0ixStandby's sleep code runs as an `IOPlatformSleepAction`, i.e.
+after every driver's `setPowerState` has returned, so it never ran during
+them. The hang is not limited to the re-sleep after a dark wake: it also
+happened on a user sleep right after a full (power-button) wake and ~3 min
+after boot. What every hang had in common was **AC with the battery at 100 %**.
+AC sleeps that started while still charging (87 %, 83 %) were clean for 2 h
+and 88 min, and the battery filled up during them.
+
+At 100 % the HP EC stops charging at 3620 of 3622 mAh. SMCBatteryManager sets
+"fully charged" only when remaining ≥ last full, so macOS saw `IsCharging No`,
+`FullyCharged No`, no `NotChargingReason`. powerd then logged `Invalid
+notChargingReason` and scheduled `GaugingMitigationActions` every 3–4 min;
+PowerUIAgent's `com.apple.obc` polled every 299 s. Those are the
+every-5-minute dark wakes on AC.
+
+[`SSDT-BATFULL`](../acpi/SSDT-BATFULL.dsl) reports remaining = last full when
+the battery isn't charging and is within 3 % of full ([BATTERY-FULL](BATTERY-FULL.md)).
+With it, `FullyCharged = Yes`, the gauging wakes are gone and the OBC wake
+moves to ~23 h. AC sleeps at 100 % went from "every one froze within 15–45 min"
+to 4 of 4 clean (20 s, 20 min, 42 min, 98 min, with `-s0ixacnortc`).
+
+How the battery state reaches GFX0 isn't proven. The working explanation is
+that it multiplies the framebuffer's sleep/wake cycles, and the TGL framebuffer
+under WhateverXe hangs in one of them now and then. WhateverXe 0.8.0 adds a
+guard for the repeated `system_will_sleep` preparation after a dark wake, but
+only for ADL-P/ADL-N (display 13), not TGL.
+
+Ruled out on the way: HP's `_PTS(3)` doesn't touch the EC for S3 (`HPTS`
+clears `EC0.ACPI` only for S4/S5), and no AC/battery ACPI event calls into
+`GFX0` (`_Q06`, `HWAK`, `PNOT`; `GFX0.AINT` only for brightness and
+slate/dock).
+
 ## Still to capture
 
 - A 30–60 min run of `s2idle-test.sh` for a tighter power number.
