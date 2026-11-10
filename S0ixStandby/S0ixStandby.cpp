@@ -1199,10 +1199,24 @@ void S0ixStandby::onWake()
 		publishTimer->setTimeoutMS(500);
 }
 
-void S0ixStandby::publishTimerFired(OSObject *owner, IOTimerEventSource *)
+void S0ixStandby::publishTimerFired(OSObject *owner, IOTimerEventSource *sender)
 {
-	if (S0ixStandby *self = OSDynamicCast(S0ixStandby, owner))
+	S0ixStandby *self = OSDynamicCast(S0ixStandby, owner);
+	if (!self) return;
+	if (self->pendingPublish) {
 		self->publish();
+		// The framebuffer restores the display a few seconds after the wake
+		// action: take a second look once it should be done.
+		if (self->gpuMMIO && sender) {
+			self->dispLate = true;
+			sender->setTimeoutMS(15000);
+		}
+	} else if (self->dispLate) {
+		self->dispLate = false;
+		self->publishDisplay();
+		if (OSObject *o = self->getProperty("Display power now"))
+			self->setProperty("Display power 15 s after wake", o);
+	}
 }
 
 void S0ixStandby::publish()

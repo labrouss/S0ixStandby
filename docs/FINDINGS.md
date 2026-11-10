@@ -387,7 +387,7 @@ Separately, hardware video decode hangs the GPU every ~10 s on this setup
 not enabled); removing the VA bundle stops it (draft 2). It explained the GPU
 restarts while awake, not the freeze.
 
-### 12.1 Update (2026-11-10): the trigger is the battery state at 100 %, fixed by SSDT-BATFULL
+### 12.1 Update (2026-11-10): AC dark-wake re-sleeps, multiplied by the battery state at 100 %
 
 All 15 hangs between 2026-11-05 and 2026-11-10 are the same `Failure during
 sleep: GFX0() : Some drivers failed to handle setPowerState`; no other driver
@@ -411,6 +411,15 @@ the battery isn't charging and is within 3 % of full ([BATTERY-FULL](BATTERY-FUL
 With it, `FullyCharged = Yes`, the gauging wakes are gone and the OBC wake
 moves to ~23 h. AC sleeps at 100 % went from "every one froze within 15–45 min"
 to 4 of 4 clean (20 s, 20 min, 42 min, 98 min, with `-s0ixacnortc`).
+
+Without `-s0ixacnortc` (SSDT-BATFULL only, `FullyCharged = Yes`, no gauging
+wakes) it still hung: 5 dark wakes in 2 h (3× OBC in the first 11 min, then
+calendar, CSPN), and the re-sleep after the 5th froze GFX0. Every dark wake on
+AC lasted **45 s**. On battery all 17 dark wakes of the night lasted **0 s**.
+So any dark wake on AC carries the risk: it runs long enough to bring the
+framebuffer up (`SetState 1 → 0`), and its re-sleep is where the TGL framebuffer
+hangs. The battery-state bug only multiplied those cycles. On the 840 G8 AC
+sleeps need both SSDT-BATFULL and `-s0ixacnortc`; with both they were clean.
 
 How the battery state reaches GFX0 isn't proven. The working explanation is
 that it multiplies the framebuffer's sleep/wake cycles, and the TGL framebuffer

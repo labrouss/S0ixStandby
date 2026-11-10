@@ -14,10 +14,13 @@ and powerd repeatedly logs `Invalid notChargingReason, skip battery charging
 state update`. On battery, or while it's still charging, the dark wakes come
 every 25–60 minutes as usual.
 
-On the HP EliteBook 840 G8 these frequent wake/sleep cycles eventually hang
-the Tiger Lake framebuffer (`Failure during sleep: GFX0() : Some drivers failed
-to handle setPowerState`, [FINDINGS §12](FINDINGS.md)). Every AC sleep at 100 %
-froze within 15–45 minutes. With the fix below, the same sleeps are clean.
+On the HP EliteBook 840 G8 these frequent wake/sleep cycles make a Tiger Lake
+framebuffer hang (`Failure during sleep: GFX0() : Some drivers failed to handle
+setPowerState`, [FINDINGS §12](FINDINGS.md)) much more likely: every AC sleep at
+100 % froze within 15–45 minutes. The fix below removes the extra dark wakes.
+On that laptop the remaining normal AC dark wakes can still hang the
+framebuffer, so it also needs S0ixStandby's `-s0ixacnortc` on AC. With both,
+the same sleeps are clean.
 
 ## Cause
 
@@ -102,9 +105,18 @@ changes, so a wrong patch does no harm.
 | Replace | `140C5842535400A44254535400` (`FAxYQlNUAKRCVFNUAA==`) |
 | TableSignature / Count | `DSDT` (`RFNEVA==`) / 1 |
 
-Result on AC at 100 %: before, every sleep froze within 15–45 min. After,
-4 of 4 sleeps were clean (20 s, 20 min, 42 min, 98 min), with no gauging
-wakes and the OBC wake about 23 h out ([TESTING](TESTING.md)).
+Result on AC at 100 %:
+
+| | Dark wakes | Result |
+|---|---|---|
+| neither | every ~4 min (gauging + OBC) | every sleep froze within 15–45 min |
+| `-s0ixacnortc` only | none while asleep, but a direct sleep after a wake froze twice | froze |
+| SSDT-BATFULL only | 5 in 2 h (3× OBC right after the sleep, calendar, CSPN), 45 s each | froze on the re-sleep after the 5th |
+| **both** | none while asleep | **4/4 clean** (20 s, 20 min, 42 min, 98 min) |
+
+The SSDT is useful on any machine that shows `stuck`, because it removes the
+frequent dark wakes. Whether `-s0ixacnortc` is also needed depends on whether
+the graphics driver survives dark-wake re-sleeps on AC ([TESTING](TESTING.md)).
 
 ## Upstream
 

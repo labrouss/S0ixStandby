@@ -182,6 +182,18 @@ hangs.
 On battery the same machine did an 11.5 h Deep Idle night with 26 dark wakes
 cleanly (no acceleration), and 4 h with acceleration and 5 dark wakes.
 
+**Battery state and dark-wake length (2026-11-10)**
+
+At 100 % the EC stops charging just short of full. VirtualSMC then reports
+"not charging, not full", and macOS dark-wakes every ~4 min (battery gauging,
+Optimized Charging). An SSDT that reports the battery as full removes those
+wakes. Even then, the re-sleep after an ordinary AC dark wake (CSPN, the 5th in
+2 h) hung `GFX0`. Every dark wake on AC lasted **45 s**. On battery all 17
+dark wakes of a 9 h night lasted **0 s**, and battery sleep never hangs. Only
+blocking RTC dark wakes on AC as well (S0ixStandby `-s0ixacnortc`) made AC
+sleeps clean (4/4, up to 98 min). So the trigger is the framebuffer's re-sleep
+after a dark wake that ran long enough to involve it.
+
 **Relation to 0.8.0's dark-wake guard**
 
 0.8.0 adds a guard for the repeated `IOGraphicsAccelerator2::system_will_sleep`

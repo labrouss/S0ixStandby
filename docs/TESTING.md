@@ -215,3 +215,4 @@ Add one row per run.
 | 2026-11-10 | macOS 26.7.1 (25G241) | 01.19.00 | 0.5.1 `-s0ixacnortc`, AC, charging from 83 % | 1 h 28 min | — | 0 | clean; the 90 s `pmset relative wake` was blocked (as designed) |
 | 2026-11-10 | macOS 26.7.1 (25G241) | 01.19.00 | 0.5.1 `-s0ixacnortc`, **AC at 100 %**, sleep 5 min after a full wake | — | — | — | **GFX0 hang at sleep entry** |
 | 2026-11-10 | macOS 26.7.1 (25G241) | 01.19.00 | 0.5.1 `-s0ixacnortc`, **AC at 100 % + SSDT-BATFULL** (`FullyCharged = Yes`) | 20 s, 20 min, 42 min, **98 min** | — | 0 | **4/4 clean**, incl. a quick re-sleep after a wake; no `GaugingMitigationActions`, OBC wake ~23 h out |
+| 2026-11-10 | macOS 26.7.1 (25G241) | 01.19.00 | 0.5.1, **AC at 100 % + SSDT-BATFULL, no `-s0ixacnortc`** | ~2 h | — | 0 | 5 dark wakes (3× OBC, calendar, CSPN), **45 s each** (battery: 0 s); no gauging; **GFX0 hang on the re-sleep after the 5th** → `-s0ixacnortc` still needed on AC |
