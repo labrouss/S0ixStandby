@@ -182,6 +182,18 @@ hangs.
 On battery the same machine did an 11.5 h Deep Idle night with 26 dark wakes
 cleanly (no acceleration), and 4 h with acceleration and 5 dark wakes.
 
+**Relation to 0.8.0's dark-wake guard**
+
+0.8.0 adds a guard for the repeated `IOGraphicsAccelerator2::system_will_sleep`
+preparation loop after a dark wake (`pendingSleepDisplays`,
+`WEXDSIDarkWakeParked`). That looks like this exact case: a framebuffer that
+never got a wake notification during the dark wake goes through sleep
+preparation again. The guard is gated to ADL-P/ADL-N
+(`systemWakeRecovery`, display-13 framebuffers), so it is not active on Tiger
+Lake (display 12), and `WEXDSIDarkWakeReady` is not published here. Could the
+guard be enabled for TGL? I'm happy to test a build or boot-arg that turns it
+on.
+
 **Reading**
 
 What remains in every failing run is macOS Deep Idle with the TGL
