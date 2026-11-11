@@ -47,13 +47,85 @@
 #include <kern/clock.h>
 #include <pexpert/pexpert.h>
 #include <architecture/i386/pio.h>
+#include <stdarg.h>
+#include <libkern/libkern.h>
 
 OSDefineMetaClassAndStructors(S0ixStandby, IOService)
 
-#define LOG(fmt, ...)  IOLog("S0ixStandby: " fmt "\n", ##__VA_ARGS__)
-#define DBG(fmt, ...)  do { if (gDebug) IOLog("S0ixStandby: " fmt "\n", ##__VA_ARGS__); } while (0)
+#define LOG(fmt, ...)  s0ixLog(fmt, ##__VA_ARGS__)
+#define DBG(fmt, ...)  do { if (gDebug) s0ixLog(fmt, ##__VA_ARGS__); } while (0)
 
 static bool gDebug = false;
+
+// ---------------------------------------------------------------------------
+// Log ring: IOLog output from third-party kexts doesn't reliably reach dmesg
+// or the unified log on recent macOS, so the last lines are also kept here and
+// published as "Recent log". Safe from the sleep/wake actions (no allocation,
+// no registry access); publishLog() copies it to the registry later.
+// ---------------------------------------------------------------------------
+static const unsigned kLogLines = 40;
+static const unsigned kLogLen = 128;
+static char gLogBuf[kLogLines][kLogLen];
+static uint64_t gLogTime[kLogLines];
+static uint32_t gLogNext;
+static volatile bool gLogDirty;
+static IOSimpleLock *gLogLock;
+
+void s0ixLog(const char *fmt, ...)
+{
+	char line[kLogLen];
+	va_list ap;
+	va_start(ap, fmt);
+	vsnprintf(line, sizeof(line), fmt, ap);
+	va_end(ap);
+	IOLog("S0ixStandby: %s\n", line);
+
+	uint64_t now = mach_absolute_time();
+	IOInterruptState st = 0;
+	if (gLogLock) st = IOSimpleLockLockDisableInterrupt(gLogLock);
+	uint32_t i = gLogNext % kLogLines;
+	memcpy(gLogBuf[i], line, sizeof(line));
+	gLogTime[i] = now;
+	gLogNext++;
+	gLogDirty = true;
+	if (gLogLock) IOSimpleLockUnlockEnableInterrupt(gLogLock, st);
+}
+
+void S0ixStandby::publishLog()
+{
+	if (!gLogDirty) return;
+	IOInterruptState st = 0;
+	if (gLogLock) st = IOSimpleLockLockDisableInterrupt(gLogLock);
+	uint32_t next = gLogNext;
+	gLogDirty = false;
+	if (gLogLock) IOSimpleLockUnlockEnableInterrupt(gLogLock, st);
+
+	uint32_t count = next < kLogLines ? next : kLogLines;
+	OSArray *arr = OSArray::withCapacity(count ? count : 1);
+	if (!arr) return;
+	for (uint32_t k = 0; k < count; k++) {
+		uint32_t i = (next - count + k) % kLogLines;
+		char text[kLogLen];
+		uint64_t t;
+		// One line at a time under the lock (small stack, no allocation held).
+		if (gLogLock) st = IOSimpleLockLockDisableInterrupt(gLogLock);
+		memcpy(text, gLogBuf[i], sizeof(text));
+		t = gLogTime[i];
+		if (gLogLock) IOSimpleLockUnlockEnableInterrupt(gLogLock, st);
+		text[kLogLen - 1] = 0;
+		uint64_t ns = 0;
+		absolutetime_to_nanoseconds(t, &ns);
+		char line[kLogLen + 24];
+		snprintf(line, sizeof(line), "%llu.%03llu %s",
+		         ns / 1000000000ULL, (ns / 1000000ULL) % 1000ULL, text);
+		if (OSString *s = OSString::withCString(line)) {
+			arr->setObject(s);
+			s->release();
+		}
+	}
+	setProperty("Recent log", arr);
+	arr->release();
+}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -239,6 +311,7 @@ bool S0ixStandby::start(IOService *provider)
 	if (PE_parse_boot_argn("s0ixfn", &fn, sizeof(fn)))
 		fnAllow = fn;
 
+	if (!gLogLock) gLogLock = IOSimpleLockAlloc();
 	if (!IOService::start(provider))
 		return false;
 
@@ -248,6 +321,7 @@ bool S0ixStandby::start(IOService *provider)
 		            "the CPU cannot wake from Deep Idle. Remove SSDT-DEEPIDLE.");
 		LOG("AMD CPU: Deep Idle cannot wake on this platform (no XNU halt handler); "
 		    "not registering sleep/wake actions. Remove SSDT-DEEPIDLE.");
+		publishLog();
 		registerService();
 		return true;
 	}
@@ -377,6 +451,7 @@ bool S0ixStandby::start(IOService *provider)
 	LOG("started on %s (Intel 0x%x, Microsoft 0x%x, AMD 0x%x, dsm %s)",
 	    lps0->getName(), dsmMask[kIntel], dsmMask[kMicrosoft], dsmMask[kAMD],
 	    dsmEnabled ? "on" : "off");
+	publishLog();
 	return true;
 }
 
@@ -415,6 +490,10 @@ void S0ixStandby::stop(IOService *provider)
 
 void S0ixStandby::free()
 {
+	if (IOSimpleLock *l = gLogLock) {
+		gLogLock = nullptr;
+		IOSimpleLockFree(l);
+	}
 	OSSafeReleaseNULL(publishTimer);
 	OSSafeReleaseNULL(scanTimer);
 	OSSafeReleaseNULL(liveTimer);
@@ -1088,6 +1167,7 @@ void S0ixStandby::battTimerFired(OSObject *owner, IOTimerEventSource *sender)
 {
 	if (S0ixStandby *self = OSDynamicCast(S0ixStandby, owner)) {
 		self->battCheck();
+		self->publishLog();
 		sender->setTimeoutMS(60000);
 	}
 }
@@ -1214,6 +1294,7 @@ void S0ixStandby::publishTimerFired(OSObject *owner, IOTimerEventSource *sender)
 	} else if (self->dispLate) {
 		self->dispLate = false;
 		self->publishDisplay();
+		self->publishLog();
 		if (OSObject *o = self->getProperty("Display power now"))
 			self->setProperty("Display power 15 s after wake", o);
 	}
@@ -1300,6 +1381,7 @@ void S0ixStandby::publish()
 	publishBlockers();
 	publishGPU();
 	publishDisplay();
+	publishLog();
 	if (wifiDev) {
 		char w[96];
 		snprintf(w, sizeof(w), "at sleep action D%u (0x%04x), at wake action D%u (0x%04x)",

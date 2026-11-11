@@ -191,7 +191,7 @@ wakes. Even then, the re-sleep after an ordinary AC dark wake (CSPN, the 5th in
 2 h) hung `GFX0`. Every dark wake on AC lasted **45 s**. On battery all 17
 dark wakes of a 9 h night lasted **0 s**, and battery sleep never hangs. Only
 blocking RTC dark wakes on AC as well (S0ixStandby `-s0ixacnortc`) made AC
-sleeps clean (4/4, up to 98 min). So the trigger is the framebuffer's re-sleep
+sleeps clean (4/4 up to 98 min, then an 11 h 20 min night). So the trigger is the framebuffer's re-sleep
 after a dark wake that ran long enough to involve it.
 
 **Relation to 0.8.0's dark-wake guard**

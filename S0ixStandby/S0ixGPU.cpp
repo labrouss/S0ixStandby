@@ -37,7 +37,7 @@
 #include <IOKit/IONVRAM.h>
 #include <pexpert/pexpert.h>
 
-#define LOG(fmt, ...)  IOLog("S0ixStandby: " fmt "\n", ##__VA_ARGS__)
+#define LOG(fmt, ...)  s0ixLog(fmt, ##__VA_ARGS__)
 
 // --- Registers (MMIO BAR0 offsets) -------------------------------------------
 

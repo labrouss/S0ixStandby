@@ -19,6 +19,9 @@
 #include <IOKit/acpi/IOACPIPlatformDevice.h>
 #include <IOKit/pci/IOPCIDevice.h>
 
+// Logs with IOLog and keeps the line in the "Recent log" ring (S0ixStandby.cpp).
+void s0ixLog(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+
 class S0ixStandby : public IOService {
 	OSDeclareDefaultStructors(S0ixStandby)
 
@@ -245,6 +248,7 @@ private:
 	void onSleep();
 	void onWake();
 	void publish();
+	void publishLog();
 	static void publishTimerFired(OSObject *owner, IOTimerEventSource *sender);
 };
 

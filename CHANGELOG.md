@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.3 (unreleased): own log ring ("Recent log")
+
+- On macOS 26 the kext's IOLog output (and other third-party kexts') reaches
+  neither `dmesg` nor the unified log: with `-s0ixdbg` not a single
+  `S0ixStandby:` line was found, only the kernel's own
+  `IOPlatformSleepAction -> S0ixStandby`. The kext now also keeps its last
+  40 log lines (seconds since boot + text) in a ring buffer and publishes them
+  as the `Recent log` property: after each wake, at start, and every minute.
+  The sleep/wake actions only write into the buffer (no allocation, no
+  registry access). IOLog is still called as before.
+- `s0ix-status.sh`: new `== S0ixStandby log` section from `Recent log`; works
+  without `sudo` and on any macOS. Like all properties, it's lost on a forced
+  power-off.
+
 ## 0.5.2 (unreleased): battery "not full" on AC detected; SSDT-BATFULL
 
 - **Cause of the AC freeze found:** on AC at 100 % the EC stops charging a few
@@ -22,8 +36,9 @@
   `IOPMPowerSource`; logged when it becomes or stops being `stuck`.
 - `s0ix-status.sh`: `== Battery` section with a hint to BATTERY-FULL.md;
   `Since boot: N sleeps, N dark wakes, N h asleep` from `pmset -g log` (the
-  kext only reports the last Deep Idle stretch); the kernel-log section falls
-  back to `dmesg` when the unified log has no S0ixStandby lines (it was empty).
+  kext only reports the last Deep Idle stretch); the kernel-log section reads
+  `dmesg` first (instant; `log show --last boot` took ~1 min) and falls back to
+  the last 30 min of the unified log (it was empty before).
 - Display probe: new `Display power 15 s after wake` (DC_STATE_EN, power
   wells, DC counters read again once the framebuffer should have restored the
   display; `Display power now` is taken 0.5 s after the wake action). Tells a

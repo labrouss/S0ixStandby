@@ -112,7 +112,7 @@ Result on AC at 100 %:
 | neither | every ~4 min (gauging + OBC) | every sleep froze within 15–45 min |
 | `-s0ixacnortc` only | none while asleep, but a direct sleep after a wake froze twice | froze |
 | SSDT-BATFULL only | 5 in 2 h (3× OBC right after the sleep, calendar, CSPN), 45 s each | froze on the re-sleep after the 5th |
-| **both** | none while asleep | **4/4 clean** (20 s, 20 min, 42 min, 98 min) |
+| **both** | none while asleep | **clean**: 4/4 short sleeps (up to 98 min) and an **11 h 20 min** night |
 
 The SSDT is useful on any machine that shows `stuck`, because it removes the
 frequent dark wakes. Whether `-s0ixacnortc` is also needed depends on whether

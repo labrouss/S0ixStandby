@@ -8,7 +8,7 @@ sleeps in **Deep Idle** (the S0 sleep built into XNU) with the Modern Standby
 
 [![build](https://github.com/labrouss/S0ixStandby/actions/workflows/build.yml/badge.svg)](https://github.com/labrouss/S0ixStandby/actions/workflows/build.yml)
 
-**Status: pre-release 0.5.2.** Generic: any Intel laptop with an ACPI LPS0
+**Status: pre-release 0.5.3.** Generic: any Intel laptop with an ACPI LPS0
 device (`PNP0D80`); **not AMD** (see [Platform support](#platform-support)). Built and released by GitHub Actions only. First test machine:
 HP EliteBook 840 G8 (Tiger Lake), macOS Tahoe 26.7.1, OpenCore 1.0.8.
 **Testers with other laptops wanted**, see [Testing](#testing-wanted).
@@ -28,7 +28,8 @@ HP EliteBook 840 G8 (Tiger Lake), macOS Tahoe 26.7.1, OpenCore 1.0.8.
 | | |
 |---|---|
 | Real S0ix (SLP_S0) | Not asserted, although package C10 is reached and every PMC requirement Linux needs is met at the halt (display, CNVi, ISH, Thunderbolt all ruled out, [FINDINGS §11](docs/FINDINGS.md)). Power is already in Linux's S0ix range, so the gain left is a few tenths of a watt |
-| **Freeze on AC** (`GFX0(): Some drivers failed to handle setPowerState`) | On AC, Apple's TGL framebuffer (WhateverXe) can hang in the **re-sleep after a dark wake** (LED steady), also with S0ixStandby disabled ([FINDINGS §12](docs/FINDINGS.md)). Dark wakes on AC last ~45 s (on battery 0 s, never a problem). At 100 % it gets much worse: the EC stops charging just short of full and macOS dark-wakes every ~4 min. **On AC use both:** `-s0ixacnortc` (no RTC dark wakes while asleep on AC) and, if `s0ix-status.sh` shows `Battery full state = stuck`, [SSDT-BATFULL](docs/BATTERY-FULL.md). Together: AC sleeps at 100 % clean (up to 98 min); either one alone still hung. Reported to WhateverXe |
+| **Freeze on AC** (`GFX0(): Some drivers failed to handle setPowerState`) | On AC, Apple's TGL framebuffer (WhateverXe) can hang in the **re-sleep after a dark wake** (LED steady), also with S0ixStandby disabled ([FINDINGS §12](docs/FINDINGS.md)). Dark wakes on AC last ~45 s (on battery 0 s, never a problem). At 100 % it gets much worse: the EC stops charging just short of full and macOS dark-wakes every ~4 min. **On AC use both:** `-s0ixacnortc` (no RTC dark wakes while asleep on AC) and, if `s0ix-status.sh` shows `Battery full state = stuck`, [SSDT-BATFULL](docs/BATTERY-FULL.md). Together: AC sleeps at 100 % clean (11 h 20 min overnight); either one alone still hung. Reported to WhateverXe |
+| External HDMI across Deep Idle (WhateverXe, TGL-H35 report) | With an HDMI display connected, the wake shows an HPD flap storm on that DDI (`isHPDLow` toggling, `sinkCount = 0`) and the machine freezes a few seconds later. Without the cable, wake is clean, and plugging in afterwards works. Graphics-driver side ([#3](https://github.com/labrouss/S0ixStandby/issues/3)); unplug external displays before sleep |
 | GPU hangs with hardware video (WhateverXe, TGL) | YouTube/Photo Booth decode hangs the GPU every ~10 s (`GPURestartSignaled`, CCS ring). Removing `AppleIntelTGLGraphicsVADriver.bundle` stops it (software decode, Metal stays). Not related to S0ixStandby |
 | Rare dark display after wake | Seen twice, not reproducible with the same settings; please report with `macos/wake-report.sh` |
 | Wi-Fi after wake | AirportItlwm reconnects after every wake (it stops the firmware for sleep) |
@@ -73,7 +74,7 @@ XCPM stops at core C6 in Deep Idle; with Ice Lake it reaches C10
 
 | Platform | Status |
 |---|---|
-| Intel Tiger Lake (tested), other Intel with LPS0 | supported; the wake-time iGPU reset is on by default on Tiger Lake only |
+| Intel Tiger Lake (tested), other Intel with LPS0 | supported; the wake-time iGPU reset is on by default on Tiger Lake only. Reports: i7-1185G7 (HP EliteBook 840 G8), i5-11300H / TGL-H35 (MECHREVO Forza 6, internal display, [#3](https://github.com/labrouss/S0ixStandby/issues/3)) |
 | Intel Ice Lake / Alder Lake / Raptor Lake iGPU | sleep path generic; the iGPU reset stays off unless `-s0ixgpureset` (untested there, e.g. with NootedGreen) |
 | **AMD** | **not supported.** XNU's Deep Idle halt (`pmCPUHalt(PM_HALT_SLEEP)`, xnu `osfmk/i386/pmCPU.c`) needs a CPU power-management halt handler (Intel XCPM / AppleIntelCPUPowerManagement); without one it stops the CPU with interrupts off and it never wakes, with or without the `_DSM` calls. Don't install SSDT-DEEPIDLE on AMD. From 0.5.0 the kext detects AMD and stays out of the sleep path |
 
@@ -118,8 +119,9 @@ means a CPU froze outright (often an NVMe/PCIe hang). Also check
 `PKG_CST_CONFIG_CONTROL` in `macos/s0ix-status.sh`: a limit below C10 (e.g.
 `C0/C1`, set by the firmware's C-state option) prevents any real standby.
 
-**Logs:** `-s0ixdbg` output goes to the unified log
-(`log show --last 1h --predicate 'eventMessage CONTAINS "S0ixStandby"'`).
+**Logs:** the kext keeps its last 40 lines in the `Recent log` property
+(`s0ix-status.sh` shows them; `-s0ixdbg` adds the per-sleep detail). It also
+calls IOLog, but on macOS 26 that output didn't reach `dmesg` or the unified log.
 After a forced power-off the newest entries are usually lost (the log is
 written in batches); the kext's ioreg properties reset with the reboot.
 

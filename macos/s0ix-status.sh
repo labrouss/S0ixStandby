@@ -24,8 +24,9 @@ else
   echo "(no C-state/TSC data yet: needs kext >= 0.1.4 and one sleep)"
 fi
 # The kext reports only the last Deep Idle stretch; sum the whole boot from pmset.
-BT=$(sysctl -n kern.boottime 2>/dev/null | sed -E 's/.*sec = ([0-9]+).*/\1/')
-if [ -n "$BT" ]; then
+# kern.boottime is "{ sec = N, usec = M } date": take sec, not usec.
+BT=$(sysctl -n kern.boottime 2>/dev/null | sed -nE 's/^\{ sec = ([0-9]+),.*/\1/p')
+if [ -n "$BT" ] && [ "$BT" -gt 1000000000 ]; then
   BTS=$(date -r "$BT" "+%Y-%m-%d %H:%M:%S")
   pmset -g log 2>/dev/null | awk -v b="$BTS" 'substr($0,1,19) >= b {
       if ($0 ~ /Entering Sleep state/) { n++; if (match($0, /[0-9]+ secs *$/)) t += substr($0, RSTART) + 0 }
@@ -57,8 +58,21 @@ if echo "$P" | grep -q '"Battery full state" = "stuck'; then
   echo "  -> the EC stopped charging just short of full; see docs/BATTERY-FULL.md (SSDT-BATFULL)"
 fi
 echo
+echo "== S0ixStandby log (Recent log, kept by the kext; 0.5.3+)"
+RL=$(echo "$P" | grep '"Recent log"' | sed 's/^[^(]*= (//; s/)$//')
+if [ -n "$RL" ]; then
+  RL=${RL#\"}; RL=${RL%\"}
+  # one entry per line (BSD sed can't insert newlines; bash can)
+  printf '%s\n' "${RL//\",\"/$'\n'}" | tail -25 | sed 's/^/  /'
+else
+  echo "  (not reported: needs 0.5.3)"
+fi
+echo
 echo "== kernel log (this boot)"
-# IOLog lines are not always in the unified log; fall back to the kernel message buffer.
-KL=$(log show --last boot --style compact --predicate 'eventMessage CONTAINS "S0ixStandby:"' 2>/dev/null | grep -v kernelmanager | grep "S0ixStandby:")
-[ -z "$KL" ] && KL=$(dmesg 2>/dev/null | grep "S0ixStandby:")
-if [ -n "$KL" ]; then echo "$KL" | tail -20; else echo "  (none: run with sudo for dmesg)"; fi
+# IOLog lines are in the kernel message buffer; the unified log is the fallback.
+# dmesg first: it's instant, while log show --last boot can take a minute.
+KL=$(dmesg 2>/dev/null | grep "S0ixStandby:")
+[ -z "$KL" ] && KL=$(log show --last 30m --style compact --predicate 'eventMessage CONTAINS "S0ixStandby:"' 2>/dev/null | grep -v kernelmanager | grep "S0ixStandby:")
+if [ -n "$KL" ]; then echo "$KL" | tail -20
+elif [ "$(id -u)" -ne 0 ]; then echo "  (none: run with sudo for dmesg)"
+else echo "  (no S0ixStandby lines in dmesg or the last 30 min; most appear only with -s0ixdbg)"; fi
