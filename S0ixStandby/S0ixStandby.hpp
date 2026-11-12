@@ -246,6 +246,7 @@ private:
 	uint32_t ecWakeCount {0};
 	const char *ecGpeFrom {nullptr};
 	uint32_t ecTries {0};
+	bool ecGpeWasOn {true};
 	void setupWakeInfo();
 	void findEcGpe();
 	void publishEcWake();
@@ -257,6 +258,7 @@ private:
 	// Battery "full" state check: AC, not charging, not FullyCharged, but
 	// within 3 % of full makes macOS dark-wake every few minutes.
 	bool dispLate {false};
+	uint32_t dispLoggedFor {0};
 	IOTimerEventSource *battTimer {nullptr};
 	uint8_t battState {0xFF};
 	void battCheck();

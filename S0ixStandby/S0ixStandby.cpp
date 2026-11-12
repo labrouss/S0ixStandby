@@ -1297,6 +1297,12 @@ void S0ixStandby::battTimerFired(OSObject *owner, IOTimerEventSource *sender)
 {
 	if (S0ixStandby *self = OSDynamicCast(S0ixStandby, owner)) {
 		self->battCheck();
+		if (self->gpe0EnPort && self->ecGpe != 0xFFFFFFFF) {
+			bool on = (inb((uint16_t)(self->gpe0EnPort + self->ecGpe / 8)) >> (self->ecGpe % 8)) & 1;
+			self->setProperty("EC GPE now", on ? "enabled" : "DISABLED (EC events not handled)");
+			if (!on && self->ecGpeWasOn) LOG("EC GPE 0x%x is disabled while awake", self->ecGpe);
+			self->ecGpeWasOn = on;
+		}
 		if (self->gpe0StsPort && self->ecGpe == 0xFFFFFFFF && self->ecTries < 10) {
 			self->ecTries++;
 			self->findEcGpe();
@@ -1365,13 +1371,11 @@ void S0ixStandby::onWake()
 		rtcBlocked = false;
 		rtcBlockCount++;
 	}
-	// Give the EC GPE enable back to macOS as it was; a pending EC event stays
-	// in the status register and is handled once ACPI re-enables its GPEs.
-	if (ecArmed) {
-		uint16_t p = (uint16_t)(gpe0EnPort + ecGpe / 8);
-		outb(p, (uint8_t)(inb(p) & ~(1u << (ecGpe % 8))));
-		ecArmed = false;
-	}
+	// Leave the EC GPE enable set: it is the EC's runtime GPE, which ACPI keeps
+	// enabled while awake anyway. Clearing it here (0.5.4 before this fix) could
+	// switch it off for the whole session when ACPI had already re-enabled it,
+	// and then no EC event (battery, AC, lid, keys, thermal) was handled.
+	ecArmed = false;
 	if (wakeInfoValid && ecGpe != 0xFFFFFFFF && (gpe0StsAtWake[ecGpe / 8] >> (ecGpe % 8) & 1))
 		ecWakeCount++;
 	if (entered) {

@@ -11,11 +11,14 @@
   (`_Qxx` → `Notify(LID)`) and the lid device has no `_PRW`, macOS leaves the
   EC's GPE off during sleep and only the power button wakes. With this flag the
   kext sets the EC GPE enable bit at the Deep Idle quiesce action (if macOS left
-  it off) and restores it first thing at wake; macOS then handles the pending
+  it off); macOS then handles the pending
   EC event (lid open) as usual. Other EC events (battery, AC, thermal) may wake
   too: watch `EC wakes`. Off by default. The EC (`PNP0C09`) is looked up in
   the ACPI plane, not only among registered services, and retried every minute
-  for 10 min; `s0ixecgpe=0xNN` sets its GPE by hand.
+  for 10 min; `s0ixecgpe=0xNN` sets its GPE by hand. The enable bit is not
+  cleared again at wake (a first build did, which could leave the EC's runtime
+  GPE off for the session and hung the 840 G8 a minute after a wake).
+  `EC GPE now` reports every minute whether the EC GPE is enabled while awake.
 
 ## 0.5.3 (unreleased): own log ring ("Recent log")
 

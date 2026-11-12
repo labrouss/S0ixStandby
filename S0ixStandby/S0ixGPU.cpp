@@ -577,8 +577,10 @@ void S0ixStandby::publishDisplay()
 		setProperty("Display power at sleep", buf);
 		dispFormat(snap.dispAtWake, buf, sizeof(buf));
 		setProperty("Display power at wake", buf);
-		if (snap.dispAtSleep.valid && snap.dispAtWake.valid)
+		if (snap.dispAtSleep.valid && snap.dispAtWake.valid && snap.sleepCount != dispLoggedFor) {
+			dispLoggedFor = snap.sleepCount;
 			LOG("wake #%u: display DC5->DC6 +%u during sleep", snap.sleepCount,
 			    snap.dispAtWake.reg[kDispDc6] - snap.dispAtSleep.reg[kDispDc6]);
+		}
 	}
 }
