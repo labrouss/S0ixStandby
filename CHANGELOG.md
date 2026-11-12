@@ -13,7 +13,9 @@
   kext sets the EC GPE enable bit at the Deep Idle quiesce action (if macOS left
   it off) and restores it first thing at wake; macOS then handles the pending
   EC event (lid open) as usual. Other EC events (battery, AC, thermal) may wake
-  too: watch `EC wakes`. Off by default.
+  too: watch `EC wakes`. Off by default. The EC (`PNP0C09`) is looked up in
+  the ACPI plane, not only among registered services, and retried every minute
+  for 10 min; `s0ixecgpe=0xNN` sets its GPE by hand.
 
 ## 0.5.3 (unreleased): own log ring ("Recent log")
 

@@ -1123,28 +1123,54 @@ void S0ixStandby::setupWakeInfo()
 		gpe0EnPort = (uint16_t)(gpe + gpe0Half);
 	}
 
-	// The EC's _GPE (an integer: a GPE0 bit; a package means a GPE block device).
-	if (OSDictionary *match = nameMatching("PNP0C09")) {
-		if (OSIterator *it = getMatchingServices(match)) {
-			while (OSObject *o = it->getNextObject())
-				if (IOACPIPlatformDevice *ec = OSDynamicCast(IOACPIPlatformDevice, o)) {
-					UInt32 v = 0;
-					if (ec->evaluateInteger("_GPE", &v) == kIOReturnSuccess) { ecGpe = v; break; }
-				}
-			it->release();
-		}
-		match->release();
-	}
+	findEcGpe();
 
+	publishEcWake();
+}
+
+// The EC's GPE number: s0ixecgpe=N overrides; otherwise _GPE of the PNP0C09
+// device, searched in the ACPI plane (the EC nub isn't always registered yet,
+// or at all). An integer is a GPE0 bit; a package means a GPE block device.
+void S0ixStandby::findEcGpe()
+{
+	uint32_t forced = 0;
+	if (PE_parse_boot_argn("s0ixecgpe", &forced, sizeof(forced)) && forced < 0x100) {
+		ecGpe = forced;
+		ecGpeFrom = "s0ixecgpe";
+		return;
+	}
+	OSString *hid = OSString::withCString("PNP0C09");
+	if (!hid) return;
+	const IORegistryPlane *plane = IORegistryEntry::getPlane("IOACPIPlane");
+	if (!plane) { hid->release(); return; }
+	if (IORegistryIterator *it = IORegistryIterator::iterateOver(plane, kIORegistryIterateRecursively)) {
+		while (IORegistryEntry *e = it->getNextObject()) {
+			IOACPIPlatformDevice *ec = OSDynamicCast(IOACPIPlatformDevice, e);
+			if (!ec || !ec->compareName(hid)) continue;
+			UInt32 v = 0;
+			if (ec->evaluateInteger("_GPE", &v) == kIOReturnSuccess) {
+				ecGpe = v;
+				ecGpeFrom = ec->getName();
+				break;
+			}
+		}
+		it->release();
+	}
+	hid->release();
+}
+
+void S0ixStandby::publishEcWake()
+{
 	char buf[160];
 	if (!gpe0StsPort || ecGpe == 0xFFFFFFFF || ecGpe / 8 >= gpe0Half) {
-		snprintf(buf, sizeof(buf), "unavailable: GPE0 block 0x%llx length %u, EC _GPE %s",
-		         (unsigned long long)gpe, gpeLen, ecGpe == 0xFFFFFFFF ? "not found" : "outside GPE0");
+		snprintf(buf, sizeof(buf), "unavailable: GPE0 block 0x%x length %u, EC _GPE %s",
+		         gpe0StsPort, gpe0Half * 2u,
+		         ecGpe == 0xFFFFFFFF ? "not found (set s0ixecgpe=0xNN)" : "outside GPE0");
 		if (ecGpe != 0xFFFFFFFF && ecGpe / 8 >= gpe0Half) ecGpe = 0xFFFFFFFF;
 	} else {
-		snprintf(buf, sizeof(buf), "%s: EC GPE 0x%x, enable at I/O 0x%x bit %u",
+		snprintf(buf, sizeof(buf), "%s: EC GPE 0x%x (%s), enable at I/O 0x%x bit %u",
 		         ecWake ? "armed during Deep Idle (-s0ixecwake)" : "off (boot-arg -s0ixecwake)",
-		         ecGpe, gpe0EnPort + ecGpe / 8, ecGpe % 8);
+		         ecGpe, ecGpeFrom ? ecGpeFrom : "?", gpe0EnPort + ecGpe / 8, ecGpe % 8);
 	}
 	setProperty("EC wake", buf);
 	LOG("EC wake %s", buf);
@@ -1271,6 +1297,11 @@ void S0ixStandby::battTimerFired(OSObject *owner, IOTimerEventSource *sender)
 {
 	if (S0ixStandby *self = OSDynamicCast(S0ixStandby, owner)) {
 		self->battCheck();
+		if (self->gpe0StsPort && self->ecGpe == 0xFFFFFFFF && self->ecTries < 10) {
+			self->ecTries++;
+			self->findEcGpe();
+			if (self->ecGpe != 0xFFFFFFFF) self->publishEcWake();
+		}
 		self->publishLog();
 		sender->setTimeoutMS(60000);
 	}

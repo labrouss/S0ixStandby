@@ -244,7 +244,11 @@ private:
 	uint16_t pm1StsAtWake {0};
 	uint8_t gpe0StsAtWake[16] {};
 	uint32_t ecWakeCount {0};
+	const char *ecGpeFrom {nullptr};
+	uint32_t ecTries {0};
 	void setupWakeInfo();
+	void findEcGpe();
+	void publishEcWake();
 	void publishWakeInfo();
 	bool setupRtcBlock();
 	void updateAC();
