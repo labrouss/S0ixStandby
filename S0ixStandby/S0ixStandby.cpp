@@ -1146,7 +1146,7 @@ void S0ixStandby::findEcGpe()
 	if (IORegistryIterator *it = IORegistryIterator::iterateOver(plane, kIORegistryIterateRecursively)) {
 		while (IORegistryEntry *e = it->getNextObject()) {
 			IOACPIPlatformDevice *ec = OSDynamicCast(IOACPIPlatformDevice, e);
-			if (!ec || !ec->compareName(hid)) continue;
+			if (!ec || !ec->compareName(hid, nullptr)) continue;
 			UInt32 v = 0;
 			if (ec->evaluateInteger("_GPE", &v) == kIOReturnSuccess) {
 				ecGpe = v;
@@ -1185,13 +1185,13 @@ void S0ixStandby::publishWakeInfo()
 	}
 	char buf[192];
 	int n = snprintf(buf, sizeof(buf), "%s", "");
-	if (pm1StsAtWake & (1u << 8))  n += snprintf(buf + n, sizeof(buf) - n, "%sPWRBTN", n ? ", " : "");
-	if (pm1StsAtWake & (1u << 10)) n += snprintf(buf + n, sizeof(buf) - n, "%sRTC", n ? ", " : "");
+	if (pm1StsAtWake & (1u << 8))  n += snprintf(buf + n, sizeof(buf) - (size_t)n, "%sPWRBTN", n ? ", " : "");
+	if (pm1StsAtWake & (1u << 10)) n += snprintf(buf + n, sizeof(buf) - (size_t)n, "%sRTC", n ? ", " : "");
 	for (uint32_t i = 0; i < gpe0Half && i < sizeof(gpe0StsAtWake) && n < (int)sizeof(buf) - 24; i++)
 		for (uint32_t b = 0; b < 8; b++)
 			if (gpe0StsAtWake[i] & (1u << b)) {
 				uint32_t g = i * 8 + b;
-				n += snprintf(buf + n, sizeof(buf) - n, "%sGPE 0x%x%s", n ? ", " : "", g,
+				n += snprintf(buf + n, sizeof(buf) - (size_t)n, "%sGPE 0x%x%s", n ? ", " : "", g,
 				              g == ecGpe ? " (EC)" : "");
 			}
 	if (!n) snprintf(buf, sizeof(buf), "none latched (PM1_STS 0x%04x)", pm1StsAtWake);
