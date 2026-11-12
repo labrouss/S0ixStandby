@@ -117,6 +117,7 @@ the `S0ixStandby` service.
 | DSM masks, LPIT, MSR 0xE2 | What the firmware and CPU offer |
 | GPU state after sleep / GPU reset | Whether the iGPU kept its state, and whether (and how fast) it was reset |
 | Battery full state | Read every minute from `IOPMPowerSource`. `stuck` = on AC, not charging, not FullyCharged, within 3 % of full: macOS then dark-wakes every few minutes ([BATTERY-FULL](BATTERY-FULL.md)) |
+| Last wake source | PM1 status (PWRBTN, RTC) and GPE0 status bits latched right after the halt, e.g. `PWRBTN` or `GPE 0x6e (EC)`. With `EC GPE at last halt` (whether macOS left the EC's GPE on) and `EC wakes` |
 | Recent log | The kext's last 40 log lines (seconds since boot), published after each wake, at start and every minute |
 | Since boot (script) | Sleeps, dark wakes and hours asleep since boot, from `pmset -g log` |
 
@@ -149,6 +150,7 @@ On the HP EliteBook 840 G8 everything up to the fourth row works (0.4.0:
 | `-s0ixnogpureset` | never reset the GPU |
 | `-s0ixgpureset` | enable the wake-time GPU reset on Gen11/12 CPUs other than Tiger Lake (default there: off, untested) |
 | `-s0ixwifipm` | experimental: let macOS's PCI layer put the Wi-Fi function into D3 for sleep (as Apple's drivers request), with its ACPI `_PS3` and config restore on wake |
+| `-s0ixecwake` | experimental: at the Deep Idle quiesce action (last step before the halt), set the EC's GPE enable bit (EC `_GPE`, GPE0 enable register from the FADT) if macOS left it off; restored first thing at the wake action. A pending EC event (e.g. lid open, `_Q0A` on the HP) is then handled by macOS's ACPI as usual |
 | `-s0ixacnortc` | experimental: while on AC (IOPMPowerSource `ExternalConnected`, cached every 10 s), clear the RTC's alarm interrupt enable (CMOS register B AIE) and the ACPI `RTC_EN` (PM1_EN bit 10, PM1a event block from the FADT) at the Deep Idle sleep action, `RTC_EN` again at the quiesce action; both restored first thing at the wake action. No RTC dark wakes on AC |
 | `-s0ixrefclk` | experimental: i915's Wa_14010685332 for Deep Idle: `SOUTH_CHICKEN1` (iGPU MMIO 0xC2000) bit 7 set at the sleep action when the display core is down (DC9, power wells off), cleared at the wake action |
 | `-s0ixgpuprobe` | debugging: also probe an idle GPU and keep the last result in NVRAM (`nvram s0ix-gpu-last`, survives a panic) |

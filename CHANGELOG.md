@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.4 (unreleased): wake sources; lid wake via the EC (`-s0ixecwake`)
+
+- New read-only report of what woke each Deep Idle sleep: `Last wake source`
+  lists PM1 status (PWRBTN, RTC) and the GPE0 status bits latched right after
+  the halt (e.g. `GPE 0x6e (EC)`). `EC GPE at last halt` shows whether macOS
+  left the embedded controller's GPE enabled; `EC wake` shows the EC GPE and
+  its enable register (FADT GPE0 block + EC `_GPE`).
+- `-s0ixecwake` (experimental, opt-in): on laptops where the lid is an EC event
+  (`_Qxx` → `Notify(LID)`) and the lid device has no `_PRW`, macOS leaves the
+  EC's GPE off during sleep and only the power button wakes. With this flag the
+  kext sets the EC GPE enable bit at the Deep Idle quiesce action (if macOS left
+  it off) and restores it first thing at wake; macOS then handles the pending
+  EC event (lid open) as usual. Other EC events (battery, AC, thermal) may wake
+  too: watch `EC wakes`. Off by default.
+
 ## 0.5.3 (unreleased): own log ring ("Recent log")
 
 - On macOS 26 the kext's IOLog output (and other third-party kexts') reaches

@@ -307,6 +307,7 @@ bool S0ixStandby::start(IOService *provider)
 	wifiPM = bootArg("-s0ixwifipm");
 	refclkWA = bootArg("-s0ixrefclk");
 	acNoRtc = bootArg("-s0ixacnortc");
+	ecWake = bootArg("-s0ixecwake");
 	uint32_t fn = 0;
 	if (PE_parse_boot_argn("s0ixfn", &fn, sizeof(fn)))
 		fnAllow = fn;
@@ -406,6 +407,8 @@ bool S0ixStandby::start(IOService *provider)
 		setProperty("AC RTC wake block", "off (boot-arg -s0ixacnortc)");
 	}
 
+	setupWakeInfo();
+
 	if (workLoop) {
 		battTimer = IOTimerEventSource::timerEventSource(this, &S0ixStandby::battTimerFired);
 		if (battTimer && workLoop->addEventSource(battTimer) != kIOReturnSuccess)
@@ -434,7 +437,7 @@ bool S0ixStandby::start(IOService *provider)
 	// after start() succeeds (IOService.cpp, IOInstallServiceSleepPlatformActions).
 	setProperty("IOPlatformSleepAction", (unsigned long long)kActionPriority, 32);
 	setProperty("IOPlatformWakeAction", (unsigned long long)kActionPriority, 32);
-	if (cstateMask || (pmcDump && counterPage) || gatingPtr || pm1EnPort) {
+	if (cstateMask || (pmcDump && counterPage) || gatingPtr || pm1EnPort || gpe0StsPort) {
 		// Boot-CPU snapshot right around the Deep Idle halt (MSR/MMIO reads only).
 		setProperty("IOPlatformQuiesceAction", (unsigned long long)kActionPriority, 32);
 		setProperty("IOPlatformActiveAction", (unsigned long long)kActionPriority, 32);
@@ -1005,6 +1008,15 @@ IOReturn S0ixStandby::callPlatformFunction(const OSSymbol *functionName, bool wa
 		// Interrupts are disabled in these two: MSR reads only, no locks/logging.
 		if (functionName->isEqualTo("IOPlatformQuiesceAction")) {
 			if (rtcBlocked) outw(pm1EnPort, (uint16_t)(inw(pm1EnPort) & ~kPm1RtcEn));
+			if (ecArm) {
+				// Last thing before the halt: macOS has set up its wake GPEs.
+				uint16_t p = (uint16_t)(gpe0EnPort + ecGpe / 8);
+				uint8_t m = (uint8_t)(1u << (ecGpe % 8)), v = inb(p);
+				ecEnAtHalt = (v & m) ? 1 : 0;
+				if (!(v & m)) { outb(p, (uint8_t)(v | m)); ecArmed = true; }
+			} else if (gpe0EnPort && ecGpe != 0xFFFFFFFF) {
+				ecEnAtHalt = (inb((uint16_t)(gpe0EnPort + ecGpe / 8)) >> (ecGpe % 8)) & 1;
+			}
 			if (cstateMask) { readHalt(haltAtQuiesce); tscAtQuiesce = rdtsc(); haltValid = false; }
 			if (pmcDump && counterPage) {
 				for (uint32_t i = 0; i < 1024; i++) pmcAtHalt[i] = counterPage[i];
@@ -1020,6 +1032,13 @@ IOReturn S0ixStandby::callPlatformFunction(const OSSymbol *functionName, bool wa
 			// Right after the halt: the PMC's latched LPM status (latched at
 			// package C10 entry by default) shows the state during the sleep.
 			if (cstateMask && tscAtQuiesce) { readHalt(haltAtActive); tscAtActive = rdtsc(); haltValid = true; }
+			if (gpe0StsPort) {
+				// What woke the CPU: status bits are still set here (cleared later by ACPI).
+				pm1StsAtWake = pm1StsPort ? inw(pm1StsPort) : 0;
+				for (uint32_t i = 0; i < gpe0Half && i < sizeof(gpe0StsAtWake); i++)
+					gpe0StsAtWake[i] = inb((uint16_t)(gpe0StsPort + i));
+				wakeInfoValid = true;
+			}
 			if (pmcDump && counterPage && pmcHaltValid) {
 				for (uint32_t i = 0; i < 1024; i++) pmcAtActive[i] = counterPage[i];
 				pmcActiveValid = true;
@@ -1072,6 +1091,91 @@ bool S0ixStandby::setupRtcBlock()
 	setProperty("AC RTC wake block", buf);
 	LOG("AC RTC wake block %s", buf);
 	return true;
+}
+
+// FADT event blocks and the EC's GPE: lets every sleep report what woke it
+// (read-only), and -s0ixecwake keep the EC GPE armed during Deep Idle.
+void S0ixStandby::setupWakeInfo()
+{
+	const OSData *fadt = nullptr;
+	if (IOACPIPlatformExpert *acpi = OSDynamicCast(IOACPIPlatformExpert, getPlatform()))
+		fadt = ACPITableAccess::get(acpi, "FACP", 0);
+	if (!fadt && getPlatform())
+		if (OSDictionary *tables = OSDynamicCast(OSDictionary, getPlatform()->getProperty("ACPI Tables")))
+			fadt = OSDynamicCast(OSData, tables->getObject("FACP"));
+	if (!fadt || fadt->getLength() < 93) {
+		setProperty("EC wake", "unavailable: no FADT");
+		return;
+	}
+	const uint8_t *f = static_cast<const uint8_t *>(fadt->getBytesNoCopy());
+	uint32_t len = fadt->getLength();
+	uint64_t pm1 = OSReadLittleInt32(f, 56);                     // PM1a_EVT_BLK
+	if (len >= 160 && f[148] == 1 && OSReadLittleInt64(f, 152))   // X_PM1a_EVT_BLK, SystemIO
+		pm1 = OSReadLittleInt64(f, 152);
+	uint64_t gpe = OSReadLittleInt32(f, 80);                     // GPE0_BLK
+	uint8_t gpeLen = f[92];                                       // GPE0_BLK_LEN
+	if (len >= 232 && f[220] == 1 && OSReadLittleInt64(f, 224))   // X_GPE0_BLK, SystemIO
+		gpe = OSReadLittleInt64(f, 224);
+	if (pm1 && pm1 < 0xFFFF) pm1StsPort = (uint16_t)pm1;
+	if (gpe && gpe + gpeLen <= 0xFFFF && gpeLen >= 2 && !(gpeLen & 1)) {
+		gpe0StsPort = (uint16_t)gpe;
+		gpe0Half = gpeLen / 2;
+		gpe0EnPort = (uint16_t)(gpe + gpe0Half);
+	}
+
+	// The EC's _GPE (an integer: a GPE0 bit; a package means a GPE block device).
+	if (OSDictionary *match = nameMatching("PNP0C09")) {
+		if (OSIterator *it = getMatchingServices(match)) {
+			while (OSObject *o = it->getNextObject())
+				if (IOACPIPlatformDevice *ec = OSDynamicCast(IOACPIPlatformDevice, o)) {
+					UInt32 v = 0;
+					if (ec->evaluateInteger("_GPE", &v) == kIOReturnSuccess) { ecGpe = v; break; }
+				}
+			it->release();
+		}
+		match->release();
+	}
+
+	char buf[160];
+	if (!gpe0StsPort || ecGpe == 0xFFFFFFFF || ecGpe / 8 >= gpe0Half) {
+		snprintf(buf, sizeof(buf), "unavailable: GPE0 block 0x%llx length %u, EC _GPE %s",
+		         (unsigned long long)gpe, gpeLen, ecGpe == 0xFFFFFFFF ? "not found" : "outside GPE0");
+		if (ecGpe != 0xFFFFFFFF && ecGpe / 8 >= gpe0Half) ecGpe = 0xFFFFFFFF;
+	} else {
+		snprintf(buf, sizeof(buf), "%s: EC GPE 0x%x, enable at I/O 0x%x bit %u",
+		         ecWake ? "armed during Deep Idle (-s0ixecwake)" : "off (boot-arg -s0ixecwake)",
+		         ecGpe, gpe0EnPort + ecGpe / 8, ecGpe % 8);
+	}
+	setProperty("EC wake", buf);
+	LOG("EC wake %s", buf);
+}
+
+void S0ixStandby::publishWakeInfo()
+{
+	if (!gpe0StsPort) return;
+	if (!wakeInfoValid) {
+		setProperty("Last wake source", "not recorded (not a Deep Idle halt)");
+		return;
+	}
+	char buf[192];
+	int n = snprintf(buf, sizeof(buf), "%s", "");
+	if (pm1StsAtWake & (1u << 8))  n += snprintf(buf + n, sizeof(buf) - n, "%sPWRBTN", n ? ", " : "");
+	if (pm1StsAtWake & (1u << 10)) n += snprintf(buf + n, sizeof(buf) - n, "%sRTC", n ? ", " : "");
+	for (uint32_t i = 0; i < gpe0Half && i < sizeof(gpe0StsAtWake) && n < (int)sizeof(buf) - 24; i++)
+		for (uint32_t b = 0; b < 8; b++)
+			if (gpe0StsAtWake[i] & (1u << b)) {
+				uint32_t g = i * 8 + b;
+				n += snprintf(buf + n, sizeof(buf) - n, "%sGPE 0x%x%s", n ? ", " : "", g,
+				              g == ecGpe ? " (EC)" : "");
+			}
+	if (!n) snprintf(buf, sizeof(buf), "none latched (PM1_STS 0x%04x)", pm1StsAtWake);
+	setProperty("Last wake source", buf);
+	if (ecGpe != 0xFFFFFFFF) {
+		snprintf(buf, sizeof(buf), "%s by macOS%s", ecEnAtHalt ? "enabled" : "disabled",
+		         ecWake && !ecEnAtHalt ? ", armed by -s0ixecwake" : "");
+		setProperty("EC GPE at last halt", buf);
+		setProperty("EC wakes", (unsigned long long)ecWakeCount, 32);
+	}
 }
 
 // Power source state for the sleep action, which must not touch the registry.
@@ -1213,6 +1317,9 @@ void S0ixStandby::onSleep()
 		if (pm1EnSaved & kPm1RtcEn) outw(pm1EnPort, (uint16_t)(pm1EnSaved & ~kPm1RtcEn));
 		rtcBlocked = true;
 	}
+	ecArm = ecWake && gpe0EnPort && ecGpe != 0xFFFFFFFF && lastSleepType == kSleepTypeDeepIdle;
+	ecArmed = false;
+	wakeInfoValid = false;
 	DBG("sleep: type %u, dsm %s, counter %llu, rtc wake %s", lastSleepType, entered ? "entry" : "skipped",
 	    counterAtSleep, rtcBlocked ? "blocked (AC)" : "allowed");
 }
@@ -1227,6 +1334,15 @@ void S0ixStandby::onWake()
 		rtcBlocked = false;
 		rtcBlockCount++;
 	}
+	// Give the EC GPE enable back to macOS as it was; a pending EC event stays
+	// in the status register and is handled once ACPI re-enables its GPEs.
+	if (ecArmed) {
+		uint16_t p = (uint16_t)(gpe0EnPort + ecGpe / 8);
+		outb(p, (uint8_t)(inb(p) & ~(1u << (ecGpe % 8))));
+		ecArmed = false;
+	}
+	if (wakeInfoValid && ecGpe != 0xFFFFFFFF && (gpe0StsAtWake[ecGpe / 8] >> (ecGpe % 8) & 1))
+		ecWakeCount++;
 	if (entered) {
 		dsmExit();
 		entered = false;
@@ -1324,6 +1440,7 @@ void S0ixStandby::publish()
 		setProperty("AC RTC wake blocks", (unsigned long long)rtcBlockCount, 32);
 		setProperty("On AC (last check)", onAC);
 	}
+	publishWakeInfo();
 	setProperty("Last sleep type", (unsigned long long)snap.sleepType, 32);
 	setProperty("Last DSM entry/exit", snap.sleepType == kSleepTypeDeepIdle && dsmEnabled);
 	setProperty("Last residency ticks", (unsigned long long)ticks, 64);

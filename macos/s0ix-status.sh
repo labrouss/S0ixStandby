@@ -6,7 +6,7 @@ echo "== kext"
 kextstat 2>/dev/null | grep -i s0ixstandby || kmutil showloaded 2>/dev/null | grep -i s0ixstandby || echo "S0ixStandby not loaded"
 echo
 echo "== S0ixStandby properties"
-ioreg -rd1 -c S0ixStandby -w0 | grep -E '"(DSM|LPIT|C-state meter|CPU model|PKG_CST|D3|SLP_S0 blocker|Sleep count|Last|Total|Residency|Wi-Fi|AC RTC|On AC|Battery full)' || echo "(no S0ixStandby service)"
+ioreg -rd1 -c S0ixStandby -w0 | grep -E '"(DSM|LPIT|C-state meter|CPU model|PKG_CST|D3|SLP_S0 blocker|Sleep count|Last|Total|Residency|Wi-Fi|AC RTC|On AC|Battery full|EC )' || echo "(no S0ixStandby service)"
 echo
 echo "== Last sleep (computed)"
 P=$(ioreg -rd1 -c S0ixStandby -w0)

@@ -233,6 +233,19 @@ private:
 	uint8_t cmosBSaved {0};
 	uint32_t rtcBlockCount {0};
 	IOTimerEventSource *acTimer {nullptr};
+
+	// Wake sources (read-only by default) and -s0ixecwake: keep the EC's
+	// GPE armed during Deep Idle so lid open (EC query) can wake.
+	bool ecWake {false}, ecArm {false}, ecArmed {false}, wakeInfoValid {false};
+	uint16_t pm1StsPort {0}, gpe0StsPort {0}, gpe0EnPort {0};
+	uint8_t gpe0Half {0};                  // bytes in each of the status/enable halves
+	uint32_t ecGpe {0xFFFFFFFF};           // EC _GPE number, if a GPE0 bit
+	uint8_t ecEnAtHalt {0};                // EC GPE enable bit as macOS left it at the halt
+	uint16_t pm1StsAtWake {0};
+	uint8_t gpe0StsAtWake[16] {};
+	uint32_t ecWakeCount {0};
+	void setupWakeInfo();
+	void publishWakeInfo();
 	bool setupRtcBlock();
 	void updateAC();
 	static void acTimerFired(OSObject *owner, IOTimerEventSource *sender);
