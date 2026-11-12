@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.4 (unreleased): wake sources; lid wake via the EC (`-s0ixecwake`)
+## 0.5.4 (2026-11-12): wake sources; experimental EC wake (`-s0ixecwake`); own log ring
 
 - New read-only report of what woke each Deep Idle sleep: `Last wake source`
   lists PM1 status (PWRBTN, RTC) and the GPE0 status bits latched right after
@@ -19,8 +19,14 @@
   cleared again at wake (a first build did, which could leave the EC's runtime
   GPE off for the session and hung the 840 G8 a minute after a wake).
   `EC GPE now` reports every minute whether the EC GPE is enabled while awake.
+- Result on the HP 840 G8: **no lid wake** with `-s0ixecwake`. Lid events while
+  asleep are latched (`Last wake source = PWRBTN, GPE 0x6e (EC)`; power button
+  alone: `PWRBTN`), but the CPU only wakes on the power button, with and
+  without `_DSM` 5/6. The EC probably holds the event until the host is awake.
+  The flag stays for other laptops; it is experimental.
+- The display `DC5->DC6` log line is written once per wake (was twice).
 
-## 0.5.3 (unreleased): own log ring ("Recent log")
+## 0.5.3 (2026-11-11): own log ring ("Recent log")
 
 - On macOS 26 the kext's IOLog output (and other third-party kexts') reaches
   neither `dmesg` nor the unified log: with `-s0ixdbg` not a single
@@ -34,7 +40,7 @@
   without `sudo` and on any macOS. Like all properties, it's lost on a forced
   power-off.
 
-## 0.5.2 (unreleased): battery "not full" on AC detected; SSDT-BATFULL
+## 0.5.2 (2026-11-10): battery "not full" on AC detected; SSDT-BATFULL
 
 - **Cause of the AC freeze found:** on AC at 100 % the EC stops charging a few
   mAh short of full (HP 840 G8: 3620/3622). SMCBatteryManager then reports
