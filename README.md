@@ -32,7 +32,7 @@ HP EliteBook 840 G8 (Tiger Lake), macOS Tahoe 26.7.1, OpenCore 1.0.8.
 | External HDMI across Deep Idle (WhateverXe, TGL-H35 report) | With an HDMI display connected, the wake shows an HPD flap storm on that DDI (`isHPDLow` toggling, `sinkCount = 0`) and the machine freezes a few seconds later. Without the cable, wake is clean, and plugging in afterwards works. Graphics-driver side ([#3](https://github.com/labrouss/S0ixStandby/issues/3)); unplug external displays before sleep |
 | GPU hangs with hardware video (WhateverXe, TGL) | YouTube/Photo Booth decode hangs the GPU every ~10 s (`GPURestartSignaled`, CCS ring). Removing `AppleIntelTGLGraphicsVADriver.bundle` stops it (software decode, Metal stays). Not related to S0ixStandby |
 | Wake by lid or keyboard (HP 840 G8) | Only the power button wakes from Deep Idle. macOS turns the EC's GPE off for sleep and the lid has no `_PRW`; arming the EC GPE (`-s0ixecwake`) latches the lid event but doesn't wake the CPU. `Last wake source` in `s0ix-status.sh` shows what woke each sleep |
-| Rare dark display after wake | Seen twice, not reproducible with the same settings; please report with `macos/wake-report.sh` |
+| Rare dark display after wake | Seen twice, not reproducible with the same settings; please report with `macos/wake-report.sh` (use the issue form) |
 | Wi-Fi after wake | AirportItlwm reconnects after every wake (it stops the firmware for sleep) |
 
 ## How it works

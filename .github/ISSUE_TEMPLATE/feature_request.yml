@@ -1,0 +1,20 @@
+name: Feature request or question
+description: An idea, a question about how it works, or support for a new platform
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: request
+    attributes:
+      label: Request or question
+    validations:
+      required: true
+  - type: input
+    id: machine
+    attributes:
+      label: Computer model and CPU (if relevant)
+      placeholder: HP EliteBook 840 G8, i7-1185G7
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What you tried, relevant output (remove personal information).

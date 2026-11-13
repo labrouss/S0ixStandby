@@ -1,0 +1,118 @@
+name: Sleep / wake problem or test report
+description: Deep Idle doesn't enter, doesn't wake, hangs, or you tested a new machine
+labels: ["report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing. Please remove personal information (serial numbers, MAC addresses, host and user names, SSIDs) from anything you paste. `tools/redact.sh` does most of it.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you report
+      options:
+        - label: The CPU is Intel (AMD is not supported, see the README)
+          required: true
+        - label: "`ioreg -rd1 -c IOPMrootDomain | grep DeepIdle` shows `IOPMDeepIdleSupported = Yes`"
+          required: false
+        - label: "`pmset -g` shows `hibernatemode 0`, `standby 0`, `powernap 0`"
+          required: false
+  - type: input
+    id: machine
+    attributes:
+      label: Computer model
+      placeholder: HP EliteBook 840 G8
+    validations:
+      required: true
+  - type: input
+    id: cpu
+    attributes:
+      label: CPU and iGPU device ID
+      placeholder: i7-1185G7 (Tiger Lake), 8086:9A49
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and build
+      placeholder: 26.7.1 (25G241)
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: S0ixStandby version (Release or Debug)
+      placeholder: 0.5.4 Release
+    validations:
+      required: true
+  - type: input
+    id: graphics
+    attributes:
+      label: Graphics driver and version
+      placeholder: WhateverXe 0.8.0 + Graphics 0.4.0 / NootedGreen / none (-wex-noaccel)
+  - type: textarea
+    id: bootargs
+    attributes:
+      label: Boot-args
+      description: Output of `nvram boot-args`
+      render: text
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What happens
+      options:
+        - Works (test report for a new machine)
+        - Doesn't enter sleep (LED steady, hang at sleep entry)
+        - Sleeps but doesn't wake (LED breathing, no reaction)
+        - Wakes, then black screen or no image
+        - Wakes, then freezes or panics
+        - Wakes on its own / too many dark wakes
+        - High power drain while asleep
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: power
+    attributes:
+      label: Power source when it happens
+      options:
+        - Battery
+        - AC, charging
+        - AC, battery full
+        - Both
+        - Not sure
+  - type: input
+    id: displays
+    attributes:
+      label: Displays connected
+      placeholder: internal only / internal + HDMI
+  - type: textarea
+    id: description
+    attributes:
+      label: Description and steps
+      description: What you did, what you expected, what happened, and how often (every time / 1 in N). Include the power LED state (steady or breathing).
+    validations:
+      required: true
+  - type: textarea
+    id: status
+    attributes:
+      label: s0ix-status.sh output
+      description: "`sudo ./macos/s0ix-status.sh` after a sleep and wake (or after the reboot if it hung)"
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: pmset
+    attributes:
+      label: pmset log
+      description: "`pmset -g log | grep -E \"Entering Sleep|Wake from|DarkWake from|Failure\" | tail -20`"
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Panic report, `macos/wake-report.sh` output, what you already tried (e.g. `-s0ixnodsm`, `-s0ixnogpureset`, `-s0ixoff`), ACPI notes.

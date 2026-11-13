@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Graphics problems (acceleration, external displays, GPU restarts)
+    url: https://github.com/b00t0x/WhateverXe/issues
+    about: Display and GPU driver issues belong to the graphics driver, not S0ixStandby.
