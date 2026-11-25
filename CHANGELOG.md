@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.5.13 (unreleased)
+
+- New `-s0ixhpetfix` (experimental, opt-in): AppleHPET leaves the stopped
+  HPET's comparators equal to its counter (all 0); that standing match keeps
+  the PMC from entering S0i2.0, so SLP_S0 stays 0 at PC10 99 %. The fix sets
+  matching disabled comparators to `0xFFFFFFFF` (GEN_CONF and the counter
+  untouched) at start, before the `_DSM` entry and at wake. Found and written
+  by brandonedley (#11); real SLP_S0 for 99 %+ of the sleep on an X1 Yoga
+  Gen 7 (ADL-P). Without the boot-arg the HPET is only read: `HPET comparator
+  fix` shows whether the match is there. FINDINGS §14.
+- New `-s0ixhdapm` (experimental, opt-in): sets Intel HDA (00:1f.3) PCI
+  `CGCTL` clock gating (`s0ixhdacg=`, default `0x003F01FF`) and `PGCTL` during
+  Deep Idle, restored at wake; AppleHDAController leaves `CGCTL` at 0, which
+  costs ~0.4–0.6 W of sleep power. By brandonedley (#10). `HDA PCI power state`.
+- Fixed: after a forced restart, `wake-report.sh`'s log sections showed
+  lines from the current boot (`log show` returned entries past `--end`);
+  they're now cut at the boot time as well.
+- `s0ix-status.sh` shows the HPET and HDA lines.
+
 ## 0.5.12 (2026-11-24)
 
 - New `tools/pmtel.c` and `macos/pmc-sleep-diff.sh`: read IOReport counters

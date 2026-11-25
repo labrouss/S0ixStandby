@@ -22,6 +22,13 @@ START=${1:-$(pmset -g log | grep -E "^[0-9]{4}-[0-9]{2}-[0-9]{2} .*[[:space:]]Sl
 BOOT=$(date -r "$(sysctl -n kern.boottime | sed -E 's/^\{ sec = ([0-9]+).*/\1/')" '+%Y-%m-%d %H:%M:%S')
 END=()
 [[ "$BOOT" > "$START" ]] && END=(--end "$BOOT")
+# log show has returned lines past --end (current-boot lines in a report for
+# the previous boot), so also cut by timestamp. Continuation lines follow the
+# last stamped line.
+before_end() {
+	if [ ${#END[@]} -eq 0 ]; then cat; return; fi
+	awk -v end="$BOOT" '/^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9:]{8}/ { keep = (substr($0, 1, 19) < end) } keep'
+}
 
 {
 echo "== wake-report $(date)   window from: $START${END[1]:+ to $BOOT (previous boot)}"
@@ -56,12 +63,12 @@ ioreg -rd1 -c S0ixStandby -w0 | grep -E '"(Sleep count|Last sleep type|Last SLP_
 echo
 echo "== Last 60 log lines of the window (any process)"
 echo "(after a forced power-off the newest entries may be missing: the log is written in batches)"
-log show --start "$START" "${END[@]}" --style compact 2>/dev/null | tail -60
+log show --start "$START" "${END[@]}" --style compact 2>/dev/null | before_end | tail -60
 echo
 echo "== Kernel, graphics, Wi-Fi and display lines in the window (last 80)"
 log show --start "$START" "${END[@]}" --style compact --predicate \
   'process == "kernel" OR process == "WindowServer" OR process == "loginwindow" OR eventMessage CONTAINS[c] "itlwm" OR eventMessage CONTAINS[c] "S0ixStandby" OR eventMessage CONTAINS[c] "WhateverXe" OR eventMessage CONTAINS[c] "backlight"' \
-  2>/dev/null | grep -v -E "Sandbox|AMFI" | tail -80
+  2>/dev/null | before_end | grep -v -E "Sandbox|AMFI" | tail -80
 } > "$OUT" 2>&1
 
 [ -x "$HERE/../tools/redact.sh" ] || chmod +x "$HERE/../tools/redact.sh" 2>/dev/null

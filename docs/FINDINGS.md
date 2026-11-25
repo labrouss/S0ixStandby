@@ -256,6 +256,10 @@ kexts), so the test is Wi-Fi D3 alone, then with Bluetooth off.
 
 ## 11. The iGPU display handshake is what unlocks SLP_S0 (2026-11-06)
 
+> Update 2026-11-25: the remaining blocker is most likely the stopped HPET's
+> standing comparator match (§14); the PMC diffs listed below as remaining
+> are normal sleep-time values.
+
 Full 32-bit Linux and macOS PMC page dumps (`PWRM+0x1000`) differ in one
 block of settings that never changes on Linux: `PWRM+0x1CAC` = 0x9 (same mask
 as `LPM_EN`), `0x1CB0` = 0xFF, `0x1CB4` = 0xFF (0x1CB8 = 0x80 only with
@@ -566,6 +570,38 @@ X1 Yoga Gen 7 across a PC10 99 % halt.
   with SSDT-NODPOF (DPOF rename), display power wells and DBUF off + DC9, and
   NVMe L1.2/LTR. TCSS D3cold is not needed there (IOM `0x00045300`, TD3C=0,
   DPOF=1 at the register, latch avoided by the rename).
+
+## 14. SLP_S0 = 0 at PC10 99 %: the stopped HPET's standing comparator match (2026-11-25, #11)
+
+Found by brandonedley on the ThinkPad X1 Yoga Gen 7 (ADL-P, macOS 26.7.3),
+probably the same cause as the HP 840 G8's missing SLP_S0 (§11).
+
+- AppleHPET stops the HPET (`GEN_CONF` bit 0 = 0), zeroes `MAIN_CNT` and
+  leaves the T0–T3 comparators at 0 with their interrupts off. Counter and
+  comparators then match permanently. Linux leaves its unused comparators
+  at `0xFFFFFFFF`, so a stopped HPET there has no match.
+- With that standing match the PMC waits indefinitely in the stage before
+  S0i2.0 (`PWRM+0x140C` ≈ 100 % of the PC10 time), and `PWRM+0x1C6C` bit 19
+  (an S0i2.0 requirement; `ITSS_CLK_SRC_REQ_STS` in Intel's Meteor Lake map)
+  stays 0. S0i2.0 (`0x1C80`) and SLP_S0 (`0x193C`) never count.
+- Both directions were checked: writing the comparators to 0 on Linux
+  reproduced the macOS signature exactly (PC10 8.585 s, `0x140C` 8.583 s,
+  SLP_S0 0); on macOS, setting them to `0xFFFFFFFF` gave real SLP_S0 + S0i2.0
+  for 99 %+ of 4 consecutive sleeps (battery and AC, 24.5–144.9 s each).
+  AppleHPET didn't rewrite the comparators across sleep or wake.
+- The §11 "remaining PMC diffs" (`0x10B4`, `0x1424`, `0x1434`, `0x1A00`,
+  `0x1D80` bit 3, `0x1BC4`) turned out to be normal sleep-time values: Linux
+  reads the same at suspend; they only differed from Linux's awake pages.
+- HDA (`HDA_PGD0/3`) and CNVi in `PPFEAR` don't block S0i2.0 (they matter for
+  S0i3.0). With audio loaded, Intel HDA `CGCTL` = 0 (as AppleHDAController
+  leaves it) still blocks `AC_Ring_Osc_OFF` and costs ~0.4–0.6 W; Linux keeps
+  `0x003F01FF` there (#10).
+- In S0ixStandby (0.5.13): `-s0ixhpetfix` clears the matching comparators
+  (only disabled timers, only while the HPET is stopped; `GEN_CONF` and
+  `MAIN_CNT` untouched) at start, before the `_DSM` entry and at wake.
+  `-s0ixhdapm` sets HDA `CGCTL`/`PGCTL` for the halt and restores them at wake.
+  Both are opt-in until confirmed on more platforms. Without the boot-arg,
+  `HPET comparator fix` reports whether the standing match exists.
 
 ## Still to capture
 

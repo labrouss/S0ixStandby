@@ -29,6 +29,13 @@
 //              -s0ixwifipm let IOPCIFamily put the Wi-Fi PCI function in D3 for
 //                          sleep (enablePCIPowerManagement), with _PS3 and config
 //                          restore on wake (experimental)
+//              -s0ixhdapm  restore Intel cAVS/HDA (00:1f.3) PCI CGCTL (0x48)
+//                          clock-gating bits (0x003F01FF) and PGCTL (0x44) across
+//                          Deep Idle, restoring saved values on wake (s0ixhdacg=N
+//                          overrides the CGCTL OR mask)
+//              -s0ixhpetfix  clear HPET comparators that equal the stopped main
+//                          counter (AppleHPET leaves them at 0), which keeps the
+//                          PMC from entering S0i2.0 / SLP_S0 (#11)
 //              -s0ixgpuprobe  also probe an idle GPU (canary) and keep the last
 //                          result in NVRAM (s0ix-gpu-last); for debugging
 //              s0ixfn=N    bitmask of _DSM functions allowed to run, e.g.
@@ -330,6 +337,8 @@ bool S0ixStandby::start(IOService *provider)
 	gpuReset = !bootArg("-s0ixnogpureset");
 	gpuResetForced = bootArg("-s0ixgpureset");
 	wifiPM = bootArg("-s0ixwifipm");
+	hdaCgMask = bootArg("-s0ixhdapm") ? 0x003F01FFu : 0u;
+	{ uint32_t m = 0; if (PE_parse_boot_argn("s0ixhdacg", &m, sizeof(m))) hdaCgMask = m; }
 	refclkWA = bootArg("-s0ixrefclk");
 	acNoRtc = bootArg("-s0ixacnortc");
 	ecWake = bootArg("-s0ixecwake");
@@ -363,6 +372,7 @@ bool S0ixStandby::start(IOService *provider)
 		LOG("no supported LPS0 _DSM found on %s; meter only", lps0->getName());
 
 	bool meter = setupMeter();
+	setupHpetFix();
 	if (!meter)
 		LOG("no usable LPIT SLP_S0 counter; residency will not be reported");
 	if (pmcDump && counterPage) {
@@ -529,6 +539,7 @@ void S0ixStandby::free()
 	OSSafeReleaseNULL(gpuTimer);
 	OSSafeReleaseNULL(wifiTimer);
 	OSSafeReleaseNULL(wifiDev);
+	OSSafeReleaseNULL(hdaDev);
 	OSSafeReleaseNULL(acTimer);
 	OSSafeReleaseNULL(battTimer);
 	OSSafeReleaseNULL(workLoop);
@@ -541,6 +552,8 @@ void S0ixStandby::free()
 	counter = nullptr;
 	counterPage = nullptr;
 	OSSafeReleaseNULL(counterMap);
+	hpetReg = nullptr;
+	OSSafeReleaseNULL(hpetMap);
 	OSSafeReleaseNULL(lps0);
 	OSSafeReleaseNULL(ipNames);
 	OSSafeReleaseNULL(ipIgnore);
@@ -1007,6 +1020,75 @@ void S0ixStandby::d3Enter()
 	IOLockUnlock(d3Lock);
 }
 
+void S0ixStandby::setupHdaPM()
+{
+	if (!hdaCgMask) return;
+	if (!hdaDev) {
+		OSDictionary *match = serviceMatching("IOPCIDevice");
+		OSIterator *it = match ? getMatchingServices(match) : nullptr;
+		OSSafeReleaseNULL(match);
+		if (!it) return;
+		while (OSObject *o = it->getNextObject()) {
+			IOPCIDevice *dev = OSDynamicCast(IOPCIDevice, o);
+			if (!dev || dev->getBusNumber() != 0 || dev->getDeviceNumber() != 0x1f || dev->getFunctionNumber() != 3)
+				continue;
+			uint32_t id = dev->configRead32(kIOPCIConfigVendorID);
+			uint32_t cls = dev->configRead32(kIOPCIConfigClassCode) >> 16;
+			if ((id & 0xFFFF) != 0x8086 || (cls != 0x0403 && cls != 0x0401))
+				continue;
+			UInt8 pm = 0;
+			if (!dev->findPCICapability(kIOPCIPowerManagementCapability, &pm) || !pm)
+				continue;
+			dev->retain();
+			hdaDev = dev;
+			hdaPmCap = pm;
+			hdaDid = (uint16_t)(id >> 16);
+			break;
+		}
+		it->release();
+		if (!hdaDev) {
+			setProperty("HDA PCI PM", "no Intel HDA function at 00:1f.3 found");
+			return;
+		}
+	}
+	char buf[128];
+	snprintf(buf, sizeof(buf), "00:1f.3 8086:%04x: on (-s0ixhdapm, CGCTL mask 0x%08x), PGCTL 0x%08x, CGCTL 0x%08x",
+	         hdaDid, hdaCgMask, hdaDev->configRead32(0x44), hdaDev->configRead32(0x48));
+	setProperty("HDA PCI PM", buf);
+}
+
+void S0ixStandby::hdaSleep()
+{
+	hdaTouched = false;
+	hdaSleepValid = false;
+	if (!hdaCgMask || !hdaDev || !hdaPmCap) return;
+	hdaPmSleep = hdaDev->configRead16(hdaPmCap + 4);
+	if (hdaPmSleep == 0xFFFF) return;
+	hdaPgSaved = hdaPgAfter = hdaDev->configRead32(0x44);
+	hdaCgSaved = hdaCgAfter = hdaDev->configRead32(0x48);
+	// PCI config space remains writable in D3hot: clear PGCTL.ADSPPGD (b2),
+	// set PGCTL.LSRMD (b4), and restore Intel PCH CGCTL clock-gating bits.
+	const uint32_t wantPg = (hdaPgSaved & ~(1u << 2)) | (1u << 4);
+	const uint32_t wantCg = hdaCgSaved | hdaCgMask;
+	if (wantPg != hdaPgSaved) hdaDev->configWrite32(0x44, wantPg);
+	if (wantCg != hdaCgSaved) hdaDev->configWrite32(0x48, wantCg);
+	hdaPgAfter = hdaDev->configRead32(0x44);
+	hdaCgAfter = hdaDev->configRead32(0x48);
+	hdaTouched = (hdaPgAfter != hdaPgSaved || hdaCgAfter != hdaCgSaved);
+	hdaSleepValid = true;
+}
+
+void S0ixStandby::hdaWake()
+{
+	if (!hdaDev || !hdaPmCap) return;
+	if (hdaTouched) {
+		hdaDev->configWrite32(0x44, hdaPgSaved);
+		hdaDev->configWrite32(0x48, hdaCgSaved);
+		hdaTouched = false;
+	}
+	hdaPmWake = hdaDev->configRead16(hdaPmCap + 4);
+}
+
 
 // ---------------------------------------------------------------------------
 // Sleep / wake
@@ -1088,6 +1170,117 @@ IOReturn S0ixStandby::callPlatformFunction(const OSSymbol *functionName, bool wa
 // RTC_EN (PM1_EN bit 10). Clearing it at the Deep Idle sleep action, and
 // restoring it first thing at wake, lets the alarm be programmed but never
 // wake the machine; power button, lid and other GPEs are unaffected.
+
+// ---------------------------------------------------------------------------
+// HPET standing comparator-match fix (Intel PCH S0i2.0 / SLP_S0)
+// ---------------------------------------------------------------------------
+// On macOS, AppleHPET disables the HPET (GEN_CONF bit 0 = 0), zeroes MAIN_CNT
+// (0xF0), and leaves timer comparators T0..T3 (0x108/0x128/0x148/0x168) at 0
+// with INT_ENB_CNF = 0. On Alder Lake-P (and likely Tiger Lake / Raptor Lake),
+// that standing MAIN_CNT == CMP == 0 match holds PWRM+0x1C6C bit 19 low and
+// stalls the PMC in the pre-S0i2.0 wait (PWRM+0x140C) even at PC10 = 99%.
+// Setting any matching disabled comparator to 0xFFFFFFFF (matching Linux's
+// unused comparators) while leaving GEN_CONF and MAIN_CNT untouched clears it.
+
+uint32_t S0ixStandby::hpetClearMatches(uint32_t *outMask, bool write)
+{
+	if (outMask) *outMask = 0;
+	if (!hpetReg) return 0;
+	uint32_t gcap = hpetReg[0];
+	uint32_t ntim = ((gcap >> 8) & 0x1Fu) + 1u;
+	if (ntim > 32u) ntim = 32u;
+	uint32_t conf = hpetReg[0x10 / 4];
+	if (conf & 1u) return 0; // HPET running; do not touch active timers
+	uint32_t cntLo = hpetReg[0xF0 / 4];
+	uint32_t cntHi = hpetReg[0xF4 / 4];
+	uint32_t repl  = (cntLo == 0xFFFFFFFFu) ? 0xFFFFFFFEu : 0xFFFFFFFFu;
+	uint32_t fixed = 0, mask = 0;
+	for (uint32_t t = 0; t < ntim; t++) {
+		uint32_t base = (0x100u + t * 0x20u) / 4u;
+		if ((base + 3u) >= 256u) break;
+		uint32_t cfg = hpetReg[base];
+		if (cfg & (1u << 2)) continue; // INT_ENB_CNF set; leave enabled timer alone
+		bool is64 = ((cfg & (1u << 5)) != 0) && ((cfg & (1u << 8)) == 0);
+		uint32_t cmpLo = hpetReg[base + 2u];
+		uint32_t cmpHi = is64 ? hpetReg[base + 3u] : 0u;
+		if (cmpLo == cntLo && (!is64 || cmpHi == cntHi)) {
+			mask |= (1u << t);
+			if (!write) continue;
+			hpetReg[base + 2u] = repl;
+			if (is64) hpetReg[base + 3u] = 0xFFFFFFFFu;
+			fixed++;
+		}
+	}
+	if (fixed) {
+		OSSynchronizeIO();
+		hpetFixCount += fixed;
+		hpetFixMask |= mask;
+	}
+	if (outMask) *outMask = mask;
+	return fixed;
+}
+
+void S0ixStandby::setupHpetFix()
+{
+	// Opt-in while it is confirmed on more platforms (verified on ADL-P,
+	// brandonedley, #11). Without the boot-arg the HPET is only read, so
+	// s0ix-status.sh shows whether the standing match is there.
+	hpetFixEnabled = bootArg("-s0ixhpetfix") && !bootArg("-s0ixnohpetfix");
+	uint64_t addr = 0;
+	const OSData *tbl = nullptr;
+	if (IOACPIPlatformExpert *acpi = OSDynamicCast(IOACPIPlatformExpert, getPlatform()))
+		tbl = ACPITableAccess::get(acpi, "HPET", 0);
+	if (!tbl && getPlatform())
+		if (OSDictionary *tables = OSDynamicCast(OSDictionary, getPlatform()->getProperty("ACPI Tables")))
+			tbl = OSDynamicCast(OSData, tables->getObject("HPET"));
+	if (tbl && tbl->getLength() >= 52) {
+		const uint8_t *p = static_cast<const uint8_t *>(tbl->getBytesNoCopy());
+		if (p[40] == 0) addr = OSReadLittleInt64(p, 44); // ACPI GAS: SystemMemory
+	}
+	if (!addr) addr = 0xFED00000ULL;
+	if (IOMemoryDescriptor *md = IOMemoryDescriptor::withPhysicalAddress(addr, 0x1000, kIODirectionInOut)) {
+		hpetMap = md->map(kIOMapInhibitCache);
+		md->release();
+		if (hpetMap) {
+			hpetReg = reinterpret_cast<volatile uint32_t *>(hpetMap->getVirtualAddress());
+			uint32_t cap0 = hpetReg[0], cap1 = hpetReg[1];
+			if (cap0 == 0xFFFFFFFFu || cap1 == 0xFFFFFFFFu || (cap0 & 0xFFu) == 0) {
+				hpetReg = nullptr;
+				OSSafeReleaseNULL(hpetMap);
+			}
+		}
+	}
+	if (!hpetReg) {
+		setProperty("HPET comparator fix", "unavailable (no valid HPET MMIO)");
+		return;
+	}
+	hpetAddr = addr;
+	uint32_t mask = 0;
+	hpetClearMatches(&mask, hpetFixEnabled);
+	publishHpet(mask);
+	LOG("HPET at 0x%llx: CONF 0x%x, CNT 0x%x, standing match mask 0x%x, fix %s",
+	    (unsigned long long)hpetAddr, hpetReg[0x10 / 4], hpetReg[0xF0 / 4], mask, hpetFixEnabled ? "on" : "off");
+}
+
+// "HPET comparator fix": the HPET state now and what the fix has done.
+// mask = disabled timers whose comparator equals the stopped main counter.
+void S0ixStandby::publishHpet(uint32_t mask)
+{
+	if (!hpetReg) return;
+	uint32_t conf = hpetReg[0x10 / 4], cnt = hpetReg[0xF0 / 4];
+	char buf[240];
+	if (hpetFixEnabled)
+		snprintf(buf, sizeof(buf), "on (-s0ixhpetfix): HPET 0x%llx CONF 0x%x CNT 0x%x; cleared %u comparator(s) so far (timers 0x%x)",
+		         (unsigned long long)hpetAddr, conf, cnt, hpetFixCount, hpetFixMask);
+	else if (conf & 1u)
+		snprintf(buf, sizeof(buf), "off: HPET 0x%llx running (CONF 0x%x), no standing match", (unsigned long long)hpetAddr, conf);
+	else if (mask)
+		snprintf(buf, sizeof(buf), "off: HPET 0x%llx stopped (CONF 0x%x, CNT 0x%x) with comparator == counter on timers 0x%x; "
+		         "this can keep SLP_S0 at 0 (see -s0ixhpetfix)", (unsigned long long)hpetAddr, conf, cnt, mask);
+	else
+		snprintf(buf, sizeof(buf), "off: HPET 0x%llx stopped (CONF 0x%x, CNT 0x%x), no standing match", (unsigned long long)hpetAddr, conf, cnt);
+	setProperty("HPET comparator fix", buf);
+}
 
 bool S0ixStandby::setupRtcBlock()
 {
@@ -1440,6 +1633,7 @@ void S0ixStandby::battTimerFired(OSObject *owner, IOTimerEventSource *sender)
 			self->findEcGpe();
 			if (self->ecGpe != 0xFFFFFFFF) self->publishEcWake();
 		}
+		if (self->hdaCgMask) self->setupHdaPM();
 		self->publishLog();
 		sender->setTimeoutMS(60000);
 	}
@@ -1467,7 +1661,9 @@ void S0ixStandby::onSleep()
 	}
 	// Drivers (and IOPCIFamily's D3 transition) are done by now.
 	wifiPmcsrSleep = wifiDev ? wifiDev->configRead16(wifiPmCap + 4) : 0xFFFF;
+	if (lastSleepType == kSleepTypeDeepIdle) hdaSleep();
 
+	if (lastSleepType == kSleepTypeDeepIdle && hpetFixEnabled && hpetReg) hpetClearMatches(nullptr, true);
 	entered = false;
 	if (dsmEnabled && lastSleepType == kSleepTypeDeepIdle &&
 	    (dsmMask[kIntel] || dsmMask[kMicrosoft] || dsmMask[kAMD])) {
@@ -1514,10 +1710,12 @@ void S0ixStandby::onWake()
 	ecArmed = false;
 	if (wakeInfoValid && ecGpe != 0xFFFFFFFF && (gpe0StsAtWake[ecGpe / 8] >> (ecGpe % 8) & 1))
 		ecWakeCount++;
+	if (hpetFixEnabled && hpetReg) hpetClearMatches(nullptr, true);
 	if (entered) {
 		dsmExit();
 		entered = false;
 	}
+	hdaWake();
 	// Before any driver wakes: Apple's accelerator restarts the engines later.
 	if (gpuMMIO) {
 		dispCapture(dispAtWake, &dispAtSleep);
@@ -1551,6 +1749,10 @@ void S0ixStandby::onWake()
 	snap.gpuVerdict = gpuVerdict; snap.gpuResetResult = gpuResetResult;
 	snap.gpuResetUs = gpuResetUs; snap.gpuEnginesReady = gpuEnginesReady;
 	snap.wifiPmcsrSleep = wifiPmcsrSleep; snap.wifiPmcsrWake = wifiPmcsrWake;
+	snap.hdaValid = hdaSleepValid;
+	snap.hdaPmSleep = hdaPmSleep; snap.hdaPmWake = hdaPmWake;
+	snap.hdaPgSaved = hdaPgSaved; snap.hdaPgAfter = hdaPgAfter;
+	snap.hdaCgSaved = hdaCgSaved; snap.hdaCgAfter = hdaCgAfter;
 	snap.dispAtSleep = dispAtSleep; snap.dispAtWake = dispAtWake;
 	if (pmcHaltValid)
 		for (uint32_t i = 0; i < 1024; i++) pmcSnap[i] = pmcAtHalt[i];
@@ -1677,6 +1879,14 @@ void S0ixStandby::publish()
 	publishGPU();
 	publishDisplay();
 	publishLog();
+	if (hpetReg) { uint32_t m = 0; hpetClearMatches(&m, false); publishHpet(m); }
+	if (hdaDev && snap.hdaValid) {
+		char h[180];
+		snprintf(h, sizeof(h), "00:1f.3 8086:%04x: PMCSR D%u(0x%04x)/D%u(0x%04x), PGCTL 0x%08x->0x%08x, CGCTL 0x%08x->0x%08x",
+		         hdaDid, snap.hdaPmSleep & 3, snap.hdaPmSleep, snap.hdaPmWake & 3, snap.hdaPmWake,
+		         snap.hdaPgSaved, snap.hdaPgAfter, snap.hdaCgSaved, snap.hdaCgAfter);
+		setProperty("HDA PCI power state", h);
+	}
 	if (wifiDev) {
 		char w[96];
 		snprintf(w, sizeof(w), "at sleep action D%u (0x%04x), at wake action D%u (0x%04x)",
