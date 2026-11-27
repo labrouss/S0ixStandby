@@ -82,12 +82,13 @@ static const char *const kVerdictName[] = {
 	"unknown", "retained", "lost power", "lost power (PCI config space reset)",
 	"not checked (no accelerator active at sleep)",
 };
-enum { kVerdictCount = 5, kResetCount = 9 };
+enum { kVerdictCount = 5, kResetCount = 10 };
 static const char *const kResetName[] = {
 	"not attempted", "done", "skipped: GPU state was lost (nothing to do)",
 	"skipped: no verdict", "failed: forcewake timeout", "failed: GDRST timeout",
 	"skipped: GPU not accessible at wake", "skipped: no accelerator active (nothing to do)",
 	"skipped: not a Deep Idle wake",
+	"skipped: WhateverXe keeps the retained GT (TGLS0SleepHookRouted)",
 };
 static const uint32_t kSleepTypeDeepIdleGpu = 7;   // kIOPMSleepTypeDeepIdle
 
@@ -275,6 +276,17 @@ void S0ixStandby::gpuCapture(GpuState &s, bool writeCanary, const GpuState *ref)
 	if (!ref) gpuRestoreDecode(s);
 }
 
+// WhateverXe with the retained-CSB fix (#203: the IGInterruptBridge
+// systemWillSleep hook) wakes on the GT state Deep Idle kept and publishes
+// TGLS0SleepHookRouted=true on the registry root. Resetting the GT behind it
+// would undo that, so the wake-time reset steps aside (-s0ixgpureset still
+// forces it). Read in onSleep, before the sleep action.
+bool S0ixStandby::gpuDriverKeepsState()
+{
+	IORegistryEntry *root = IORegistryEntry::getRegistryRoot();
+	return root && root->getProperty("TGLS0SleepHookRouted") == kOSBooleanTrue;
+}
+
 // Sleep action: all drivers are asleep (Apple's accelerator stopped the engines).
 void S0ixStandby::gpuSleep()
 {
@@ -313,8 +325,9 @@ void S0ixStandby::gpuWake()
 
 	// Only Deep Idle keeps the GT powered; after S3 it starts blank anyway.
 	if (gpuReset) {
-		if (lastSleepType == kSleepTypeDeepIdleGpu) gpuResetNow();
-		else gpuResetResult = 8;
+		if (lastSleepType != kSleepTypeDeepIdleGpu) gpuResetResult = 8;
+		else if (gpuSkipForDriver) gpuResetResult = 9;
+		else gpuResetNow();
 	}
 	gpuRestoreDecode(gpuAtWake);
 }

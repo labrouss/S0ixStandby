@@ -1,6 +1,18 @@
 # Changelog
 
-## 0.5.18 (unreleased)
+## 0.5.19 (unreleased)
+
+- iGPU reset at Deep Idle wake: skipped automatically when the registry root
+  has `TGLS0SleepHookRouted = Yes`, i.e. a WhateverXe build with the
+  retained-CSB fix (WhateverXe #203), which wakes on the GT state Deep Idle
+  kept; resetting behind it led to hangs at a later sleep entry. Read before
+  each sleep; `GPU reset` then shows `skipped: WhateverXe keeps the retained
+  GT`. Older WhateverXe builds keep the reset. `-s0ixgpureset` forces it,
+  `-s0ixnogpureset` still turns it off.
+- HP EliteBook 840 G8 (TGL) with WhateverXe 0.8.6 plus the #203 fix: 20+
+  sleep/wake cycles in a row, video playing across the wakes, no GPU restart.
+
+## 0.5.18 (2026-11-27)
 
 - New `-s0ixishpm` (experimental, opt-in): Intel ISH (00:12.0) boot once
   while awake plus ISHTP suspend / resume around each Deep Idle halt, so the

@@ -49,6 +49,8 @@ if echo "$P" | grep -q '"GPU registers at wake"'; then
 else
   echo "$P" | grep -E '"GPU"' | sed 's/^ *//; s/"//g; s/^/  /' || echo "  (off)"
 fi
+R=$(ioreg -d 1 -l 2>/dev/null | grep -E '"TGLS0SleepHookRouted"' | head -1 | sed 's/.*= *//')
+echo "  WhateverXe retained-GT hook (TGLS0SleepHookRouted): ${R:-not reported}"
 echo
 echo "== Display power (DMC / DC states)"
 echo "$P" | grep -E '"Display (DMC firmware|DMC at sleep|DMC at wake action|power now|power at sleep|power at wake|power 15 s after wake|refclk workaround)"' | sed 's/^ *//; s/"//g; s/^/  /' || echo "  (not reported: needs 0.4.3)"

@@ -24,8 +24,10 @@
 //              -s0ixpmcdump snapshot the PMC register page (with the SLP_S0
 //                          counter) at boot and at each Deep Idle halt
 //              (default)   Intel Gen11/12 iGPU: full GT reset at a Deep Idle wake,
-//                          before drivers, when the GPU kept its state (S0ixGPU.cpp)
+//                          before drivers, when the GPU kept its state (S0ixGPU.cpp);
+//                          skipped when WhateverXe reports TGLS0SleepHookRouted
 //              -s0ixnogpureset  never reset the GPU
+//              -s0ixgpureset    reset even when WhateverXe keeps the retained GT
 //              -s0ixwifipm let IOPCIFamily put the Wi-Fi PCI function in D3 for
 //                          sleep (enablePCIPowerManagement), with _PS3 and config
 //                          restore on wake (experimental)
@@ -342,8 +344,9 @@ bool S0ixStandby::start(IOService *provider)
 	dsmEnabled = !bootArg("-s0ixnodsm");
 	// GPU reset at Deep Idle wake: on by default (Gen11/Gen12 iGPU only,
 	// decided in setupGPU); -s0ixnogpureset turns it off. -s0ixgpuprobe adds
-	// the full probe (canary, NVRAM record); -s0ixgpureset is accepted for
-	// compatibility (same as the default).
+	// the full probe (canary, NVRAM record); -s0ixgpureset forces the reset
+	// even when WhateverXe reports that it keeps the retained GT
+	// (TGLS0SleepHookRouted, see gpuDriverKeepsState).
 	gpuProbe = bootArg("-s0ixgpuprobe");
 	gpuReset = !bootArg("-s0ixnogpureset");
 	gpuResetForced = bootArg("-s0ixgpureset");
@@ -2171,6 +2174,7 @@ void S0ixStandby::onSleep()
 	if (lastSleepType == kSleepTypeDeepIdle)
 		d3Enter();
 	if (gpuMMIO) {
+		gpuSkipForDriver = gpuReset && !gpuResetForced && gpuDriverKeepsState();
 		gpuSleep();
 		dispCapture(dispAtSleep, nullptr);
 		if (refclkWA) refclkSleep();

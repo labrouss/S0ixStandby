@@ -99,6 +99,12 @@ driver wakes, the kext checks the GPU and, if it kept its state, resets its
 engines (as Linux does on every resume). The display is not touched. Without
 an accelerator the GPU is left alone. Details: [FINDINGS.md](FINDINGS.md) §9.
 
+A WhateverXe build with the retained-CSB fix (WhateverXe #203) wakes on the
+state Deep Idle kept instead, and publishes `TGLS0SleepHookRouted = Yes` on
+the registry root. The kext reads that before each sleep and then skips the
+reset (`GPU reset` = `skipped: WhateverXe keeps the retained GT`), so
+`-s0ixnogpureset` is no longer needed with such a build.
+
 Nothing is hardcoded per laptop: everything comes from ACPI tables, the CPU
 and the platform data.
 
@@ -150,9 +156,9 @@ On the HP EliteBook 840 G8 everything up to the fourth row works (0.4.0:
 | `-s0ixdbg` | verbose log |
 | `-s0ixpmcdump` | snapshot the PMC register page at boot and at each halt |
 | `-s0ixnocst` | don't read CPU C-state MSRs |
-| (default) | Intel Gen11/12 iGPU: at a Deep Idle wake, before any driver wakes, check whether the GPU kept its state and if so reset its engines, so the graphics driver finds the blank GPU it expects |
+| (default) | Intel Gen11/12 iGPU: at a Deep Idle wake, before any driver wakes, check whether the GPU kept its state and if so reset its engines, so the graphics driver finds the blank GPU it expects. Skipped when the registry root has `TGLS0SleepHookRouted = Yes` (WhateverXe with the retained-CSB fix, read before each sleep) |
 | `-s0ixnogpureset` | never reset the GPU |
-| `-s0ixgpureset` | enable the wake-time GPU reset on Gen11/12 CPUs other than Tiger Lake (default there: off, untested) |
+| `-s0ixgpureset` | enable the wake-time GPU reset on Gen11/12 CPUs other than Tiger Lake (default there: off, untested), and keep it even when WhateverXe reports `TGLS0SleepHookRouted` |
 | `-s0ixpwrbtnwake` | at the quiesce action, if PM1_EN.PWRBTN_EN is off: write 1 to PM1_STS.PWRBTN_STS (a stale status would wake at once), set PWRBTN_EN; at the active action put it back off. Only meaningful with a fixed-feature power button (`Power button` property) |
 | `-s0ixlanpm` | Deep Idle only, at the sleep action, for each PCI Ethernet function (up to 4): Intel NICs with a memory BAR0 get `CTRL_EXT` (MMIO 0x18) bit 28 `DRV_LOAD` cleared, via a 10 ms D3hot→D0→D3hot if the driver already set D3hot (only with No_Soft_Reset = 1: a reset would wipe the driver's setup); a function left in D0 goes to D3hot with its config header saved; then the bus-master bit is cleared. At the wake action: D0 + header restore if S0ixStandby set D3hot, bus master back on. `DRV_LOAD` is set again from the publish timer once the driver has the NIC in D0 |
 | `-s0ixishpm` | once, about 30 s after boot: 00:12.0 (known Intel ISH, no driver attached) to D0, command Mem+BusMaster+INTx-disable, then Linux `ish_hw_start`/`ishtp_start` in polled mode (HOST_READY, RMP2, reset doorbell, `MNG_RESET_NOTIFY` → ACK, wait for `FWSTS` ILUP+ISHTP_READY, HBM start, query subscribers), every step with a bounded poll. At the sleep action: the 20-byte ISHTP `SYSTEM_STATE_STATUS` suspend, wait ≤100 ms for `MNG_RX_CMPL_INDICATION`; at the wake action: resume (`sts=0`). The ISH is excluded from `-s0ixd3` and never set to D3hot |

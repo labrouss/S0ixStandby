@@ -91,8 +91,8 @@ XCPM stops at core C6 in Deep Idle; with Ice Lake it reaches C10
 |---|---|
 | `-s0ixd3` | keep PCI devices that have no macOS driver in D3hot (recommended) |
 | `-s0ixdbg` | verbose log |
-| `-s0ixnogpureset` | never reset the iGPU at wake |
-| `-s0ixgpureset` | reset the iGPU at Deep Idle wake on Gen11/12 CPUs other than Tiger Lake too (off there by default, untested) |
+| `-s0ixnogpureset` | never reset the iGPU at wake (not needed with a WhateverXe that reports `TGLS0SleepHookRouted`: the reset steps aside by itself) |
+| `-s0ixgpureset` | reset the iGPU at Deep Idle wake on Gen11/12 CPUs other than Tiger Lake too (off there by default, untested); also keeps the reset when WhateverXe reports `TGLS0SleepHookRouted` |
 | `-s0ixwifipm` | experimental: Wi-Fi PCI function to D3 for sleep through IOPCIFamily (CNVi blocker work) |
 | `-s0ixpwrbtnwake` | experimental: if the power button doesn't wake from Deep Idle and `PM1_EN during halt` shows `PWRBTN_EN OFF` with `Power button = fixed feature`, set PWRBTN_EN for the halt (restored right after it) |
 | `-s0ixlanpm` | experimental: every wired Ethernet function (PCI class 0x0200, any vendor, onboard or behind a root port) is released for the Deep Idle halt as Linux does at suspend: put into D3hot if its driver left it in D0 (back to D0 at wake), bus mastering off, and on Intel NICs (e1000e/igb/igc family) `CTRL_EXT.DRV_LOAD` cleared; all restored at or after the wake. IntelMausi only sets D3, which can keep `GBE` powered and the package at PC8 ([#14](https://github.com/labrouss/S0ixStandby/issues/14)). `LAN PCI PM` lists the NICs found, `LAN PCI power state` what was done. No PHY power-down yet |
