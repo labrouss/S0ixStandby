@@ -183,6 +183,11 @@ private:
 		uint16_t solPmBefore, solPmHalt, solPmWake;
 		uint16_t hdaPmSleep, hdaPmWake;
 		uint32_t hdaPgSaved, hdaPgAfter, hdaCgSaved, hdaCgAfter;
+		bool ishValid;
+		uint16_t ishPmSleep;
+		uint32_t ishFwPre, ishFwPost, ishAckCount;
+		bool lpmValid;
+		uint32_t lpmEn, lpmRes0Sleep, lpmRes0Wake, lpmRes3Sleep, lpmRes3Wake;
 		DispState dispAtSleep, dispAtWake;
 	};
 	Snapshot snap {};
@@ -297,6 +302,28 @@ private:
 	void solWake();
 	void hdaSleep();
 	void hdaWake();
+
+	// -s0ixishpm: Intel Integrated Sensor Hub (00:12.0) ISHTP suspend -> D0i3
+	// across Deep Idle (and resume on wake) so ISH_PG / ISH_REQ_STS_7 clear
+	// for S0i3.0 (#7). Kept in D0 (never D3hot, which leaves ISH SRAM wedged
+	// across warm reboots).
+	bool ishPM {false}, ishSearched {false}, ishReady {false}, ishSleepValid {false};
+	IOPCIDevice *ishDev {nullptr};
+	IOMemoryMap *ishMap {nullptr};
+	volatile uint32_t *ishReg {nullptr};
+	UInt8 ishPmCap {0};
+	uint16_t ishDid {0}, ishPmSleep {0xFFFF};
+	uint32_t ishResetId {0xFFFFFFFFu}, ishFwPre {0}, ishFwPost {0}, ishAckCount {0};
+	void setupIshPM();
+	bool ishWaitDrblClear(uint32_t maxMs);
+	void ishSendPacket(const uint32_t *words, uint32_t nWords, uint32_t drbl);
+	uint32_t ishPollI2h(uint32_t maxMs, bool replyReset, bool stopOnRxCmpl, bool useSleep);
+	void ishSleep();
+	void ishWake();
+
+	// Read-only PMC LPM substate residency (S0i2.0 / S0i3.0 on TGL/ADL/RPL)
+	bool lpmSupported {false}, lpmSleepValid {false};
+	uint32_t lpmEn {0}, lpmRes0Sleep {0}, lpmRes0Wake {0}, lpmRes3Sleep {0}, lpmRes3Wake {0};
 
 	// -s0ixacnortc: no RTC alarm wakes from Deep Idle while on AC
 	bool acNoRtc {false}, onAC {false}, rtcBlocked {false};

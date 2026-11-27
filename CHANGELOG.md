@@ -1,6 +1,20 @@
 # Changelog
 
-## 0.5.17 (unreleased)
+## 0.5.18 (unreleased)
+
+- New `-s0ixishpm` (experimental, opt-in): Intel ISH (00:12.0) boot once
+  while awake plus ISHTP suspend / resume around each Deep Idle halt, so the
+  ISH enters D0i3 (S0i3.0 requirement). Known ISH device IDs only; the ISH is
+  never put into D3hot and is excluded from `-s0ixd3`.
+- `-s0ixhdapm`: default `CGCTL` mask is Linux's `0x00FB09FF` (was
+  `0x003F01FF`); bits 22–23 are what lets the audio PLL turn off for S0i3.0.
+- New read-only `Last LPM substates`: S0i2.0 / S0i3.0 residency of the last
+  halt (TGL/ADL/RPL).
+- With `-s0ixhdapm s0ixhdapg=0 -s0ixishpm`: S0i3.0 for 96.5 % of a 60-min
+  sleep and 97.6 % of a 5 h sleep on a ThinkPad X1 Yoga Gen 7 (ADL-P),
+  ~0.15 W below S0i2.0. By brandonedley (#15, #7).
+
+## 0.5.17 (2026-11-27)
 
 - New `macos/sleep-loop.sh`: repeats RTC-timed Deep Idle sleeps
   (`sudo bash macos/sleep-loop.sh [seconds] [count] [pause]`) and logs per

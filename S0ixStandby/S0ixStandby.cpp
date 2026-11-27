@@ -30,9 +30,11 @@
 //                          sleep (enablePCIPowerManagement), with _PS3 and config
 //                          restore on wake (experimental)
 //              -s0ixhdapm  restore Intel cAVS/HDA (00:1f.3) PCI CGCTL (0x48)
-//                          clock-gating bits (0x003F01FF) and PGCTL (0x44) across
+//                          clock-gating bits (0x00FB09FF) and PGCTL (0x44) across
 //                          Deep Idle, restoring saved values on wake (s0ixhdacg=N
-//                          overrides the CGCTL OR mask)
+//                          and s0ixhdapg=N override CGCTL/PGCTL)
+//              -s0ixishpm  boot Intel ISH (00:12.0) once while awake and send
+//                          ISHTP suspend (D0i3) / resume across Deep Idle (#7)
 //              -s0ixpwrbtnwake  experimental: set PM1_EN.PWRBTN_EN for the Deep
 //                          Idle halt if macOS left it off (fixed-feature power
 //                          button), restored right after the halt
@@ -346,7 +348,8 @@ bool S0ixStandby::start(IOService *provider)
 	gpuReset = !bootArg("-s0ixnogpureset");
 	gpuResetForced = bootArg("-s0ixgpureset");
 	wifiPM = bootArg("-s0ixwifipm");
-	hdaCgMask = bootArg("-s0ixhdapm") ? 0x003F01FFu : 0u;
+	hdaCgMask = bootArg("-s0ixhdapm") ? 0x00FB09FFu : 0u;
+	ishPM = bootArg("-s0ixishpm");
 	solPM = !bootArg("-s0ixnosold3");   // on by default since 0.5.15
 	lanPM = bootArg("-s0ixlanpm");
 	if (!solPM) setProperty("SOL PCI PM", "off (-s0ixnosold3)");
@@ -405,6 +408,8 @@ bool S0ixStandby::start(IOService *provider)
 	cstateMask = cstateSupport(model);
 	if (bootArg("-s0ixnocst")) cstateMask = 0;
 	cpuModel = model;
+	lpmSupported = (model == 0x8Cu || model == 0x8Du || model == 0x97u || model == 0x9Au ||
+	                model == 0xBEu || model == 0xB7u || model == 0xBAu || model == 0xBFu);
 	setProperty("CPU model", (unsigned long long)model, 32);
 	setupBlockerReport(model);
 	setProperty("C-state meter", cstateMask != 0);
@@ -556,6 +561,9 @@ void S0ixStandby::free()
 	OSSafeReleaseNULL(wifiDev);
 	OSSafeReleaseNULL(hdaDev);
 	OSSafeReleaseNULL(solDev);
+	ishReg = nullptr;
+	OSSafeReleaseNULL(ishMap);
+	OSSafeReleaseNULL(ishDev);
 	for (uint32_t k = 0; k < lanCount; k++) { OSSafeReleaseNULL(lan[k].map); OSSafeReleaseNULL(lan[k].dev); }
 	OSSafeReleaseNULL(acTimer);
 	OSSafeReleaseNULL(battTimer);
@@ -942,6 +950,9 @@ void S0ixStandby::scanUnbound()
 			continue;
 		if (base == 0x06 || base == 0x03 || base == 0x05)   // bridges, display, memory: never
 			continue;
+		if (ishPM && dev->getBusNumber() == 0 && dev->getDeviceNumber() == 0x12 && dev->getFunctionNumber() == 0 &&
+		    (dev->configRead32(kIOPCIConfigVendorID) & 0xFFFFu) == 0x8086u)
+			continue;                                       // managed via ISHTP D0i3 (-s0ixishpm), never D3hot
 		UInt8 pm = 0;
 		if (!dev->findPCICapability(kIOPCIPowerManagementCapability, &pm) || !pm)
 			continue;
@@ -1107,6 +1118,204 @@ void S0ixStandby::hdaWake()
 		hdaTouched = false;
 	}
 	hdaPmWake = hdaDev->configRead16(hdaPmCap + 4);
+}
+
+// ---------------------------------------------------------------------------
+// -s0ixishpm: Intel Integrated Sensor Hub (00:12.0) ISHTP suspend -> D0i3
+// ---------------------------------------------------------------------------
+// Without a macOS ISH driver, 00:12.0 holds ISH_PG (LPM_STATUS_1[27]) and
+// ISH_REQ_STS_7 (LPM_STATUS_4[7]) awake even in PCI D3hot, blocking S0i3.0.
+// Booting the ISH IPC firmware once while awake (HOST_READY + RMP2 + reset
+// handshake + HBM start + query_subscribers) and sending the 20-byte ISHTP
+// SYSTEM_STATE_STATUS suspend packet at sleep lets ISH autonomously enter
+// D0i3 while remaining in PCI D0 (#7). Never put 00:12.0 in D3hot after D0i3.
+
+bool S0ixStandby::ishWaitDrblClear(uint32_t maxMs)
+{
+	if (!ishReg) return false;
+	for (uint32_t i = 0; i < maxMs; i++) {
+		if ((ishReg[0x48 / 4] & 0x80000000u) == 0) return true;
+		IODelay(1000);
+	}
+	return (ishReg[0x48 / 4] & 0x80000000u) == 0;
+}
+
+void S0ixStandby::ishSendPacket(const uint32_t *words, uint32_t nWords, uint32_t drbl)
+{
+	if (!ishReg) return;
+	(void)ishWaitDrblClear(50);
+	for (uint32_t i = 0; i < nWords; i++)
+		ishReg[(0xE0 / 4) + i] = words[i];
+	OSSynchronizeIO();
+	ishReg[0x48 / 4] = drbl;
+	(void)ishReg[0x34 / 4];
+	(void)ishWaitDrblClear(50);
+}
+
+uint32_t S0ixStandby::ishPollI2h(uint32_t maxMs, bool replyReset, bool stopOnRxCmpl, bool useSleep)
+{
+	if (!ishReg) return 0;
+	uint32_t last = 0;
+	for (uint32_t i = 0; i < maxMs; i++) {
+		uint32_t pisr = ishReg[0x0C / 4];
+		if (pisr && pisr != 0xFFFFFFFFu) ishReg[0x0C / 4] = pisr;
+		uint32_t d = ishReg[0x54 / 4];
+		if (d != 0xFFFFFFFFu && (d & 0x80000000u)) {
+			last = d;
+			uint32_t proto = (d >> 10) & 0xFu;
+			uint32_t cmd = (d >> 16) & 0xFu;
+			uint32_t msg0 = ishReg[0x60 / 4];
+			ishReg[0x54 / 4] = 0;
+			(void)ishReg[0x34 / 4];
+			if (replyReset && proto == 3u && cmd == 3u) {
+				// MNG_RESET_NOTIFY from ISH FW -> reply MNG_RESET_NOTIFY_ACK (cmd=4)
+				uint32_t rid = msg0 & 0xFFFFu;
+				ishResetId = rid;
+				ishSendPacket(&rid, 1, 0x80040C04u);
+			}
+			if (proto == 3u && cmd == 2u) {
+				// MNG_RX_CMPL_INDICATION
+				ishAckCount++;
+				if (stopOnRxCmpl) return d;
+			}
+		}
+		if (replyReset) {
+			uint32_t fs = ishReg[0x34 / 4];
+			if (fs != 0xFFFFFFFFu && (fs & 3u) == 3u) return last;
+		}
+		if (useSleep) IOSleep(2);
+		else IODelay(1000);
+	}
+	return last;
+}
+
+void S0ixStandby::setupIshPM()
+{
+	if (!ishPM || ishSearched) return;
+	ishSearched = true;
+	OSDictionary *match = serviceMatching("IOPCIDevice");
+	OSIterator *it = match ? getMatchingServices(match) : nullptr;
+	OSSafeReleaseNULL(match);
+	if (!it) return;
+	while (OSObject *o = it->getNextObject()) {
+		IOPCIDevice *dev = OSDynamicCast(IOPCIDevice, o);
+		if (!dev || dev->getBusNumber() != 0 || dev->getDeviceNumber() != 0x12 || dev->getFunctionNumber() != 0)
+			continue;
+		if (dev->getClient()) continue;   // leave alone if a driver attached
+		uint32_t id = dev->configRead32(kIOPCIConfigVendorID);
+		if ((id & 0xFFFFu) != 0x8086u) continue;
+		// Known ISH functions with the same ISHTP IPC (Linux intel-ish-ipc):
+		// tested on ADL-P 51fc; TGL-LP a0fc, TGL-H 43fc, ADL-N 54fc, ADL-S/RPL-S 7af8 untested.
+		uint16_t did = (uint16_t)(id >> 16);
+		if (did != 0x51FC && did != 0xA0FC && did != 0x43FC && did != 0x54FC && did != 0x7AF8) {
+			char nb[96];
+			snprintf(nb, sizeof(nb), "00:12.0 8086:%04x: not a known ISH, left alone", did);
+			setProperty("ISH PCI PM", nb);
+			it->release();
+			return;
+		}
+		UInt8 pm = 0;
+		if (!dev->findPCICapability(kIOPCIPowerManagementCapability, &pm) || !pm) continue;
+		IOMemoryMap *m = dev->mapDeviceMemoryWithIndex(0);
+		if (!m || m->getLength() < 0x400) { OSSafeReleaseNULL(m); continue; }
+		dev->retain();
+		ishDev = dev;
+		ishMap = m;
+		ishReg = reinterpret_cast<volatile uint32_t *>(m->getVirtualAddress());
+		ishPmCap = pm;
+		ishDid = (uint16_t)(id >> 16);
+		break;
+	}
+	it->release();
+	if (!ishDev) {
+		setProperty("ISH PCI PM", "no unbound Intel ISH function at 00:12.0");
+		return;
+	}
+
+	uint16_t pm = ishDev->configRead16(ishPmCap + 4);
+	uint16_t cmd = ishDev->configRead16(kIOPCIConfigCommand);
+	if (pm == 0xFFFFu) {
+		setProperty("ISH PCI PM", "00:12.0 config unreadable");
+		return;
+	}
+	if ((pm & 3u) != 0) {
+		ishDev->configWrite16(ishPmCap + 4, (uint16_t)(pm & ~3u));
+		IOSleep(15);
+	}
+	// Enable Mem + Bus Master + INTx Disable (0x0406) so polled init never fires an unhandled IRQ.
+	if ((cmd & 0x0406u) != 0x0406u) {
+		ishDev->configWrite16(kIOPCIConfigCommand, (uint16_t)(cmd | 0x0406u));
+		IOSleep(2);
+	}
+
+	// Linux intel-ish-ipc ish_hw_start() + ishtp_start()
+	ishResetId = 0xFFFFFFFFu;
+	ishReg[0x38 / 4] = ishReg[0x38 / 4] & ~0x80u;          // PIMR: polled, no host IRQ
+	ishReg[0x08 / 4] = (ishReg[0x08 / 4] & ~0x100u) | 1u;  // HOST_COMM: HOST_READY=1, clear HOST_RESET
+	ishReg[0x368 / 4] = 1u;                                // ISH_RMP2_DMA_READY
+	ishReg[0x48 / 4] = 0x80000000u;                        // boot/reset doorbell
+	(void)ishReg[0x34 / 4];
+	(void)ishWaitDrblClear(100);
+	(void)ishPollI2h(600, true, false, true);              // up to ~1.2 s for MNG_RESET_NOTIFY + ILUP|ISHTP_READY
+
+	uint32_t fs = ishReg[0x34 / 4];
+	if (fs != 0xFFFFFFFFu && (fs & 3u) == 3u) {
+		// ishtp_hbm_start_req (proto=1, len=8) + ishtp_query_subscribers (proto=1, len=12)
+		const uint32_t hbm[2] = { 0x80040000u, 0x01000001u };
+		ishSendPacket(hbm, 2, 0x80000408u);
+		(void)ishPollI2h(50, false, false, true);
+		const uint32_t qsub[3] = { 0x8008000Du, 0x00000003u, 0x00000000u };
+		ishSendPacket(qsub, 3, 0x8000040Cu);
+		(void)ishPollI2h(50, false, false, true);
+		fs = ishReg[0x34 / 4];
+		ishReady = (fs != 0xFFFFFFFFu && (fs & 3u) == 3u);
+	}
+
+	char buf[160];
+	snprintf(buf, sizeof(buf), "00:12.0 8086:%04x: %s (-s0ixishpm, rid=0x%x, FWSTS 0x%08x, PMCSR 0x%04x)",
+	         ishDid, ishReady ? "ready" : "not ready", ishResetId, fs, ishDev->configRead16(ishPmCap + 4));
+	setProperty("ISH PCI PM", buf);
+	LOG("ISH %s", buf);
+}
+
+void S0ixStandby::ishSleep()
+{
+	ishSleepValid = false;
+	ishAckCount = 0;
+	if (!ishPM || !ishReady || !ishDev || !ishPmCap || !ishReg) return;
+	uint16_t pm = ishDev->configRead16(ishPmCap + 4);
+	if (pm == 0xFFFFu) return;
+	if ((pm & 3u) != 0) {
+		ishDev->configWrite16(ishPmCap + 4, (uint16_t)(pm & ~3u));
+		IODelay(10000);
+	}
+	uint16_t cmd = ishDev->configRead16(kIOPCIConfigCommand);
+	if ((cmd & 0x0406u) != 0x0406u) {
+		ishDev->configWrite16(kIOPCIConfigCommand, (uint16_t)(cmd | 0x0406u));
+		IODelay(1000);
+	}
+	ishFwPre = ishReg[0x34 / 4];
+	// ishtp_send_suspend: fw=13 len=16 complete=1 | cmd=2 res=0 supp=3 sts=3 (proto=1 len=20)
+	const uint32_t susp[5] = { 0x8010000Du, 0x00000002u, 0x00000000u, 0x00000003u, 0x00000003u };
+	ishSendPacket(susp, 5, 0x80000414u);
+	(void)ishPollI2h(100, false, true, false);
+	ishFwPost = ishReg[0x34 / 4];
+	ishPmSleep = ishDev->configRead16(ishPmCap + 4);
+	ishSleepValid = true;
+}
+
+void S0ixStandby::ishWake()
+{
+	if (!ishSleepValid || !ishDev || !ishPmCap || !ishReg) return;
+	uint16_t pm = ishDev->configRead16(ishPmCap + 4);
+	if (pm != 0xFFFFu && (pm & 3u) != 0) {
+		ishDev->configWrite16(ishPmCap + 4, (uint16_t)(pm & ~3u));
+		IODelay(10000);
+	}
+	// ishtp_send_resume: states_status = 0 (proto=1 len=20)
+	const uint32_t resm[5] = { 0x8010000Du, 0x00000002u, 0x00000000u, 0x00000003u, 0x00000000u };
+	ishSendPacket(resm, 5, 0x80000414u);
+	(void)ishPollI2h(20, false, true, false);
 }
 
 // ---------------------------------------------------------------------------
@@ -1938,6 +2147,7 @@ void S0ixStandby::battTimerFired(OSObject *owner, IOTimerEventSource *sender)
 			if (self->ecGpe != 0xFFFFFFFF) self->publishEcWake();
 		}
 		if (self->hdaCgMask) self->setupHdaPM();
+		if (self->ishPM) self->setupIshPM();
 		if (self->solPM) self->setupSolPM();
 		if (self->lanPM) self->setupLanPM();
 		self->publishLog();
@@ -1968,8 +2178,18 @@ void S0ixStandby::onSleep()
 	// Drivers (and IOPCIFamily's D3 transition) are done by now.
 	wifiPmcsrSleep = wifiDev ? wifiDev->configRead16(wifiPmCap + 4) : 0xFFFF;
 	if (lastSleepType == kSleepTypeDeepIdle) hdaSleep();
+	if (lastSleepType == kSleepTypeDeepIdle) ishSleep(); else ishSleepValid = false;
 	if (lastSleepType == kSleepTypeDeepIdle) solSleep();
 	if (lastSleepType == kSleepTypeDeepIdle) lanSleep(); else lanSleepValid = false;
+	lpmSleepValid = false;
+	// The LPM registers sit in the same PMC page as the SLP_S0 counter only
+	// when that counter is PWRM+0x193C (TGL/ADL-P/RPL-P); checked here.
+	if (lpmSupported && counterPage && (counterAddr & 0xFFFu) == 0x93Cu) {
+		lpmEn = counterPage[(0x1C78u - 0x1000u) / 4u];
+		lpmRes0Sleep = counterPage[(0x1C80u - 0x1000u) / 4u];
+		lpmRes3Sleep = counterPage[(0x1C8Cu - 0x1000u) / 4u];
+		lpmSleepValid = true;
+	}
 
 	if (lastSleepType == kSleepTypeDeepIdle && hpetFixEnabled && hpetReg) hpetClearMatches(nullptr, true);
 	entered = false;
@@ -2023,7 +2243,12 @@ void S0ixStandby::onWake()
 		dsmExit();
 		entered = false;
 	}
+	if (lpmSleepValid && counterPage) {
+		lpmRes0Wake = counterPage[(0x1C80u - 0x1000u) / 4u];
+		lpmRes3Wake = counterPage[(0x1C8Cu - 0x1000u) / 4u];
+	}
 	hdaWake();
+	ishWake();
 	solWake();
 	lanWake();
 	// Before any driver wakes: Apple's accelerator restarts the engines later.
@@ -2065,6 +2290,11 @@ void S0ixStandby::onWake()
 	snap.hdaPmSleep = hdaPmSleep; snap.hdaPmWake = hdaPmWake;
 	snap.hdaPgSaved = hdaPgSaved; snap.hdaPgAfter = hdaPgAfter;
 	snap.hdaCgSaved = hdaCgSaved; snap.hdaCgAfter = hdaCgAfter;
+	snap.ishValid = ishSleepValid; snap.ishPmSleep = ishPmSleep;
+	snap.ishFwPre = ishFwPre; snap.ishFwPost = ishFwPost; snap.ishAckCount = ishAckCount;
+	snap.lpmValid = lpmSleepValid; snap.lpmEn = lpmEn;
+	snap.lpmRes0Sleep = lpmRes0Sleep; snap.lpmRes0Wake = lpmRes0Wake;
+	snap.lpmRes3Sleep = lpmRes3Sleep; snap.lpmRes3Wake = lpmRes3Wake;
 	snap.dispAtSleep = dispAtSleep; snap.dispAtWake = dispAtWake;
 	if (pmcHaltValid)
 		for (uint32_t i = 0; i < 1024; i++) pmcSnap[i] = pmcAtHalt[i];
@@ -2207,6 +2437,23 @@ void S0ixStandby::publish()
 		         hdaDid, snap.hdaPmSleep & 3, snap.hdaPmSleep, snap.hdaPmWake & 3, snap.hdaPmWake,
 		         snap.hdaPgSaved, snap.hdaPgAfter, snap.hdaCgSaved, snap.hdaCgAfter);
 		setProperty("HDA PCI power state", h);
+	}
+	if (ishDev && snap.ishValid) {
+		char s[180];
+		snprintf(s, sizeof(s), "00:12.0 8086:%04x: ISHTP suspend ack=%u, FWSTS 0x%08x->0x%08x, PMCSR D%u(0x%04x)",
+		         ishDid, snap.ishAckCount, snap.ishFwPre, snap.ishFwPost, snap.ishPmSleep & 3, snap.ishPmSleep);
+		setProperty("ISH PCI power state", s);
+	}
+	if (snap.lpmValid) {
+		uint32_t d0 = snap.lpmRes0Wake - snap.lpmRes0Sleep;
+		uint32_t d3 = snap.lpmRes3Wake - snap.lpmRes3Sleep;
+		uint64_t ms0 = (uint64_t)d0 * 1000ULL / 32768ULL;
+		uint64_t ms3 = (uint64_t)d3 * 1000ULL / 32768ULL;
+		char l[160];
+		snprintf(l, sizeof(l), "S0i2.0 %llu.%03llus, S0i3.0 %llu.%03llus (LPM_EN 0x%x)",
+		         (unsigned long long)(ms0 / 1000), (unsigned long long)(ms0 % 1000),
+		         (unsigned long long)(ms3 / 1000), (unsigned long long)(ms3 % 1000), snap.lpmEn);
+		setProperty("Last LPM substates", l);
 	}
 	if (wifiDev) {
 		char w[96];

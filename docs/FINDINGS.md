@@ -618,6 +618,26 @@ probably the same cause as the HP 840 G8's missing SLP_S0 (§11).
 - From 0.5.15 both are on by default (`-s0ixnohpetfix`, `-s0ixnosold3` turn
   them off); `-s0ixhdapm` stays opt-in.
 
+## 15. S0i3.0 on Alder Lake-P (2026-11-27, #7, #15)
+
+brandonedley, ThinkPad X1 Yoga Gen 7 (ADL-P). With SLP_S0 working (§14), the
+package sat in S0i2.0. Comparing the latched LPM status words with Linux
+S0i3.0, macOS missed three S0i3.0 requirements:
+- **HDA power gating** (`LPM_STATUS_1[29]`): Intel HDA `PGCTL` = 0
+  (`s0ixhdapg=0`), not the `0x1b` AppleHDAController leaves.
+- **Audio PLL off** (`LPM_STATUS_0[23]`): HDA `CGCTL` bits 22–23. Bisected:
+  `0x003F09FF` → S0i3.0 0 s; `0x00FF01FF` → 98.0 %; Linux's `0x00FB09FF` →
+  97.7 % with `Fast_XTAL_Osc_OFF` = 1. Now `-s0ixhdapm`'s default.
+- **ISH** (`LPM_STATUS_1[27]`, `LPM_STATUS_4[7]`): the sensor hub has no
+  macOS driver; PCI D3hot is not enough (and after D0i3 it wedges the ISH
+  SRAM until a cold power-off). The ISHTP suspend message that Linux
+  `intel-ishtp` sends makes it enter D0i3 itself (`-s0ixishpm`).
+- CNVi is not among the differences (§14).
+
+Result: S0i3.0 96.5 % of a 60-min battery sleep (~0.97 W vs ~1.12 W in
+S0i2.0) and 97.6 % of a 5 h sleep on AC, audio fine after wake. Not yet
+tried on Tiger Lake (HP ISH 8086:a0fc).
+
 ## Still to capture
 
 - A 30–60 min run of `s2idle-test.sh` for a tighter power number.
